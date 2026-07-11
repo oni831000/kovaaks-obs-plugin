@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --op: 0.9;
+        }
+
+        html,
+        body {
+            height: 100vh;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: transparent;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 15px;
+            box-sizing: border-box;
+        }
+
+        #killstats {
+            display: none;
+            flex-direction: column;
+            gap: 0;
+            padding: 20px 24px;
+            border-radius: 16px;
+            min-width: 320px;
+            width: fit-content;
+            opacity: 0;
+            transition: opacity 0.4s ease;
+        }
+
+        #killstats.visible {
+            display: flex;
+        }
+
+        #killstats.animate-in {
+            animation: fadeSlideIn 0.4s ease forwards;
+        }
+
+        .ks-title {
+            font-size: 10px;
+            font-weight: 900;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            opacity: 0.5;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding-bottom: 8px;
+            margin-bottom: 12px;
+            text-align: center;
+        }
+
+        .ks-table {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .ks-header {
+            display: flex;
+            gap: 0;
+            padding-bottom: 4px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            margin-bottom: 2px;
+        }
+
+        .ks-row {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            padding: 3px 0;
+        }
+
+        .ks-row:not(:last-child) {
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        }
+
+        .col-name {
+            flex: 2;
+            font-size: 13px;
+            font-weight: 700;
+            text-align: left;
+        }
+
+        .col-stat {
+            flex: 1;
+            font-size: 12px;
+            text-align: right;
+        }
+
+        .col-label {
+            font-size: 9px;
+            opacity: 0.4;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .accuracy-bar {
+            height: 3px;
+            border-radius: 2px;
+            margin-top: 2px;
+            background: rgba(255, 255, 255, 0.12);
+            overflow: hidden;
+        }
+
+        .accuracy-fill {
+            height: 100%;
+            border-radius: 2px;
+            transition: width 0.6s ease;
+        }
+
+        /* === THEMES === */
+        .theme-dark {
+            background: rgba(15, 15, 15, var(--op));
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .theme-glass {
+            background: rgba(255, 255, 255, calc(var(--op)/4));
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(10px);
+        }
+
+        .theme-neon {
+            background: rgba(0, 0, 0, var(--op));
+            border: 1px solid #00f2ff;
+            box-shadow: 0 0 15px #00f2ff55;
+            color: #00f2ff;
+        }
+
+        .theme-neon .accuracy-fill {
+            background: #00f2ff;
+        }
+
+        .theme-neon .ks-title {
+            border-color: #00f2ff44;
+        }
+
+        .theme-purple {
+            background: rgba(26, 0, 46, var(--op));
+            border: 1px solid #bc13fe;
+            box-shadow: 0 0 15px #bc13fe55;
+        }
+
+        .theme-purple .accuracy-fill {
+            background: #bc13fe;
+        }
+
+        .theme-solar {
+            background: rgba(0, 43, 54, var(--op));
+            border: 1px solid #268bd2;
+            color: #839496;
+        }
+
+        .theme-solar .accuracy-fill {
+            background: #268bd2;
+        }
+
+        .theme-crt {
+            background: rgba(0, 40, 0, var(--op));
+            border: 2px solid #0f0;
+            font-family: 'Share Tech Mono';
+            color: #0f0;
+        }
+
+        .theme-crt .accuracy-fill {
+            background: #0f0;
+        }
+
+        .theme-red {
+            background: rgba(40, 0, 0, var(--op));
+            border: 1px solid #f00;
+        }
+
+        .theme-red .accuracy-fill {
+            background: #f00;
+        }
+
+        .theme-green {
+            background: rgba(0, 40, 0, var(--op));
+            border: 1px solid #0f0;
+        }
+
+        .theme-green .accuracy-fill {
+            background: #0f0;
+        }
+
+        .theme-ocean {
+            background: rgba(0, 30, 50, var(--op));
+            border: 1px solid #0af;
+        }
+
+        .theme-ocean .accuracy-fill {
+            background: #0af;
+        }
+
+        .theme-gold {
+            background: rgba(30, 20, 0, var(--op));
+            border: 1px solid #ffd700;
+            color: #ffd700;
+        }
+
+        .theme-gold .accuracy-fill {
+            background: #ffd700;
+        }
+
+        .theme-minimal {
+            background: rgba(10, 10, 10, calc(var(--op)*0.85));
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .theme-minimal .accuracy-fill {
+            background: rgba(255, 255, 255, 0.5);
+        }
+
+        /* === FONTS for special themes === */
+        @font-face {
+            font-family: 'HUNTRIX';
+            src: url('huntrix.ttf') format('truetype');
+        }
+
+        @font-face {
+            font-family: 'Sukajan';
+            src: url('sukajan.otf') format('opentype');
+        }
+
+        /* === BLOOD === */
+        @keyframes heartbeat {
+            0% {
+                transform: scale(1);
+            }
+
+            14% {
+                transform: scale(1.01);
+            }
+
+            28% {
+                transform: scale(1);
+            }
+
+            42% {
+                transform: scale(1.01);
+            }
+
+            70% {
+                transform: scale(1);
+            }
+        }
+
+        .theme-blood {
+            background: linear-gradient(180deg, rgba(20, 0, 0, var(--op)) 0%, rgba(60, 0, 0, var(--op)) 100%);
+            border-top: 3px solid #ff0000;
+            border-bottom: 8px solid #8b0000;
+            border-radius: 5px;
+            animation: heartbeat 1.5s infinite;
+        }
+
+        .theme-blood .ks-title {
+            color: #ff0000;
+            opacity: 1;
+            border-color: #ff000044;
+        }
+
+        .theme-blood .col-name {
+            color: #ffb3b3;
+        }
+
+        .theme-blood .col-stat {
+            color: #ffb3b3;
+        }
+
+        .theme-blood .accuracy-fill {
+            background: #ff0000;
+        }
+
+        /* === EMO === */
+        .theme-emo {
+            background: repeating-linear-gradient(45deg, rgba(15, 15, 15, var(--op)), rgba(15, 15, 15, var(--op)) 10px, rgba(25, 0, 10, var(--op)) 10px, rgba(25, 0, 10, var(--op)) 20px);
+            border: 3px solid #ff0080;
+        }
+
+        .theme-emo .ks-title {
+            color: #ff0080;
+            opacity: 1;
+            border-color: #ff008044;
+        }
+
+        .theme-emo .accuracy-fill {
+            background: #ff0080;
+        }
+
+        /* === GOTH === */
+        .theme-goth {
+            background: radial-gradient(circle, rgba(40, 40, 40, var(--op)) 0%, rgba(10, 10, 10, var(--op)) 100%);
+            border: 4px double #555;
+            box-shadow: inset 0 0 30px #000;
+            border-radius: 15px 15px 0 0;
+        }
+
+        .theme-goth .ks-title {
+            color: #888;
+            opacity: 1;
+            border-color: #333;
+        }
+
+        .theme-goth .col-name {
+            color: #ccc;
+            font-style: italic;
+        }
+
+        .theme-goth .accuracy-fill {
+            background: #888;
+        }
+
+        /* === LG56 === */
+        .theme-lg56 {
+            background: linear-gradient(135deg, rgba(20, 10, 45, var(--op)) 0%, rgba(10, 5, 20, var(--op)) 100%);
+            border: 2px solid #00f2ff;
+            border-radius: 12px;
+            box-shadow: 0 0 15px rgba(0, 242, 255, 0.4), inset 0 0 10px rgba(188, 19, 254, 0.2);
+            color: #fff;
+        }
+
+        .theme-lg56 .ks-title {
+            font-family: 'Orbitron', sans-serif;
+            color: #00f2ff;
+            opacity: 1;
+            border-color: rgba(0, 242, 255, 0.3);
+            text-shadow: 0 0 5px #00f2ff;
+        }
+
+        .theme-lg56 .col-name {
+            font-family: 'Orbitron', sans-serif;
+            color: #bc13fe;
+        }
+
+        .theme-lg56 .col-stat {
+            color: #fff;
+        }
+
+        .theme-lg56 .col-label {
+            color: #bc13fe;
+            opacity: 0.9;
+        }
+
+        .theme-lg56 .accuracy-fill {
+            background: #00f2ff;
+        }
+
+        /* === THX === */
+        @keyframes thxStatic {
+            0% {
+                background-position: 0 0, 0 0;
+            }
+
+            20% {
+                background-position: -5px 5px, 5px -5px;
+            }
+
+            40% {
+                background-position: 5px -5px, -5px 5px;
+            }
+
+            60% {
+                background-position: -5px 0, 5px 0;
+            }
+
+            80% {
+                background-position: 0 -5px, 0 5px;
+            }
+
+            100% {
+                background-position: 3px -3px, -3px 3px;
+            }
+        }
+
+        @keyframes thxFlicker {
+            0% {
+                opacity: 1;
+            }
+
+            10% {
+                opacity: 0.85;
+            }
+
+            11% {
+                opacity: 1;
+            }
+
+            45% {
+                opacity: 0.95;
+            }
+
+            46% {
+                opacity: 0.6;
+            }
+
+            48% {
+                opacity: 1;
+            }
+
+            80% {
+                opacity: 0.9;
+            }
+
+            100% {
+                opacity: 1;
+            }
+        }
+
+        @keyframes thxChromaJitter {
+
+            0%,
+            23%,
+            28%,
+            70%,
+            73%,
+            100% {
+                text-shadow: 2px 0px 0px rgba(255, 0, 0, 0.6), -2px 0px 0px rgba(0, 150, 255, 0.6);
+            }
+
+            24% {
+                text-shadow: 4px 0px 0px rgba(255, 0, 0, 0.8), -1px 0px 0px rgba(0, 150, 255, 0.4);
+            }
+
+            26% {
+                text-shadow: 1px 0px 0px rgba(255, 0, 0, 0.5), -4px 0px 0px rgba(0, 150, 255, 0.8);
+            }
+
+            71% {
+                text-shadow: 1px 1px 0px rgba(255, 0, 0, 0.7), -2px -1px 0px rgba(0, 150, 255, 0.5);
+            }
+        }
+
+        .theme-thx {
+            background: rgba(5, 5, 5, var(--op));
+            border: 2px solid rgba(255, 255, 255, 0.4);
+            border-radius: 0px !important;
+            color: #fff;
+            position: relative;
+            overflow: hidden;
+            box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.9);
+            /* Plus d'animation de clignotement globale ici ! */
+        }
+
+        /* Static overlay via pseudo-element sur le wrapper */
+        .theme-thx::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image:
+                repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255, 255, 255, 0.06) 2px, rgba(255, 255, 255, 0.06) 4px),
+                repeating-linear-gradient(-45deg, transparent, transparent 2px, rgba(255, 255, 255, 0.05) 2px, rgba(255, 255, 255, 0.05) 4px);
+            animation: thxStatic 0.15s steps(2) infinite;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        /* Scanlines */
+        .theme-thx::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%);
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        /* Contenu au-dessus des pseudo-éléments */
+        .theme-thx .ks-title {
+            position: relative;
+            z-index: 3;
+            color: #fff;
+            opacity: 1;
+            font-family: 'Arial Black', Impact, sans-serif;
+            letter-spacing: 1px;
+            border-color: rgba(255, 255, 255, 0.4);
+            animation: thxChromaJitter 4s infinite linear, thxFlicker 3s infinite linear;
+        }
+
+        .theme-thx .ks-table {
+            position: relative;
+            z-index: 3;
+        }
+
+        .theme-thx .col-name {
+            font-weight: 900;
+            animation: thxChromaJitter 2.8s infinite linear, thxFlicker 3s infinite linear;
+        }
+
+        .theme-thx .col-stat {
+            font-weight: 900;
+            animation: thxChromaJitter 3.2s infinite linear, thxFlicker 3s infinite linear;
+        }
+
+        .theme-thx .col-label {
+            font-family: 'Arial Black', Impact, sans-serif;
+            animation: thxChromaJitter 3.5s infinite reverse linear, thxFlicker 3s infinite linear;
+        }
+
+        .theme-thx .accuracy-fill {
+            background: rgba(255, 255, 255, 0.85);
+        }
+
+        /* === SHIKURETTO === */
+        .theme-shikuretto {
+            background: linear-gradient(135deg, rgba(25, 5, 5, var(--op)) 0%, rgba(5, 5, 5, var(--op)) 100%);
+            border: 2px solid #1aa3ff;
+            border-radius: 8px;
+            box-shadow: 0 0 20px rgba(255, 26, 26, 0.3), inset 0 0 20px rgba(255, 26, 26, 0.2);
+            color: #fff;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .theme-shikuretto::before {
+            content: "";
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(45deg, transparent 45%, rgba(173, 15, 15, 0.05) 48%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 26, 26, 0.05) 52%, transparent 55%);
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .theme-shikuretto .ks-title,
+        .theme-shikuretto .ks-table {
+            position: relative;
+            z-index: 2;
+        }
+
+        .theme-shikuretto .ks-title {
+            font-family: 'HUNTRIX', sans-serif;
+            background: linear-gradient(170deg, #7bc1f2 0%, #ffffff 42%, #226ebf 48%, #6dbff2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            filter: drop-shadow(2px 0 0 #000) drop-shadow(-2px 0 0 #000) drop-shadow(0 2px 0 #000) drop-shadow(0 -2px 0 #000);
+            opacity: 1;
+            border-color: rgba(255, 26, 26, 0.4);
+        }
+
+        .theme-shikuretto .col-name {
+            font-family: 'HUNTRIX', sans-serif;
+        }
+
+        .theme-shikuretto .accuracy-fill {
+            background: #1aa3ff;
+        }
+
+        /* === SUKAJAN === */
+        .theme-sukajan {
+            background: linear-gradient(135deg, rgba(25, 5, 5, var(--op)) 0%, rgba(5, 5, 5, var(--op)) 100%);
+            border: 2px solid #1aa3ff;
+            border-radius: 8px;
+            box-shadow: 0 0 20px rgba(255, 26, 26, 0.3), inset 0 0 20px rgba(255, 26, 26, 0.2);
+            color: #fff;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .theme-sukajan::before {
+            content: "";
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(45deg, transparent 45%, rgba(255, 26, 26, 0.05) 48%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 26, 26, 0.05) 52%, transparent 55%);
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .theme-sukajan .ks-title,
+        .theme-sukajan .ks-table {
+            position: relative;
+            z-index: 2;
+        }
+
+        .theme-sukajan .ks-title {
+            font-family: 'Sukajan', sans-serif;
+            background: linear-gradient(170deg, #7bc1f2 0%, #ffffff 42%, #226ebf 48%, #6dbff2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            filter: drop-shadow(2px 0 0 #000) drop-shadow(-2px 0 0 #000) drop-shadow(0 2px 0 #000) drop-shadow(0 -2px 0 #000);
+            opacity: 1;
+            border-color: rgba(255, 26, 26, 0.4);
+        }
+
+        .theme-sukajan .col-name {
+            font-family: 'Sukajan', sans-serif;
+        }
+
+        .theme-sukajan .accuracy-fill {
+            background: #1aa3ff;
+        }
+
+        /* === SHIKURETTO-DARK === */
+        .theme-shikuretto-dark {
+            background: linear-gradient(135deg, rgba(25, 5, 5, var(--op)) 0%, rgba(5, 5, 5, var(--op)) 100%);
+            border: 2px solid #1aa3ff;
+            border-radius: 8px;
+            box-shadow: 0 0 20px rgba(255, 26, 26, 0.3), inset 0 0 20px rgba(255, 26, 26, 0.2);
+            color: #fff;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .theme-shikuretto-dark::before {
+            content: "";
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(45deg, transparent 45%, rgba(173, 15, 15, 0.05) 48%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 26, 26, 0.05) 52%, transparent 55%);
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .theme-shikuretto-dark .ks-title,
+        .theme-shikuretto-dark .ks-table {
+            position: relative;
+            z-index: 2;
+        }
+
+        .theme-shikuretto-dark .ks-title {
+            font-family: 'HUNTRIX', sans-serif;
+            background: linear-gradient(170deg, #6fdcff 0%, #ffffff 30%, #a4bdf5 60%, #84edff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            filter: drop-shadow(2px 0 0 #000) drop-shadow(-2px 0 0 #000) drop-shadow(0 2px 0 #000) drop-shadow(0 -2px 0 #000);
+            opacity: 1;
+            border-color: rgba(255, 26, 26, 0.4);
+        }
+
+        .theme-shikuretto-dark .col-name {
+            font-family: 'HUNTRIX', sans-serif;
+        }
+
+        .theme-shikuretto-dark .accuracy-fill {
+            background: #6fdcff;
+        }
+
+        /* === SUKAJAN-DARK === */
+        .theme-sukajan-dark {
+            background: linear-gradient(135deg, rgba(25, 5, 5, var(--op)) 0%, rgba(5, 5, 5, var(--op)) 100%);
+            border: 2px solid #1aa3ff;
+            border-radius: 8px;
+            box-shadow: 0 0 20px rgba(255, 26, 26, 0.3), inset 0 0 20px rgba(255, 26, 26, 0.2);
+            color: #fff;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .theme-sukajan-dark::before {
+            content: "";
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(45deg, transparent 45%, rgba(255, 26, 26, 0.05) 48%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 26, 26, 0.05) 52%, transparent 55%);
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .theme-sukajan-dark .ks-title,
+        .theme-sukajan-dark .ks-table {
+            position: relative;
+            z-index: 2;
+        }
+
+        .theme-sukajan-dark .ks-title {
+            font-family: 'Sukajan', sans-serif;
+            background: linear-gradient(170deg, #6fdcff 0%, #ffffff 30%, #a4bdf5 60%, #84edff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            filter: drop-shadow(2px 0 0 #000) drop-shadow(-2px 0 0 #000) drop-shadow(0 2px 0 #000) drop-shadow(0 -2px 0 #000);
+            opacity: 1;
+            border-color: rgba(255, 26, 26, 0.4);
+        }
+
+        .theme-sukajan-dark .col-name {
+            font-family: 'Sukajan', sans-serif;
+        }
+
+        .theme-sukajan-dark .accuracy-fill {
+            background: #6fdcff;
+        }
+
+        @keyframes fadeSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeSlideOut {
+            from {
+                opacity: 1;
+                transform: translateY(0);
+            }
+
+            to {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+        }
+
+        #killstats.animate-out {
+            animation: fadeSlideOut 0.4s ease forwards;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="killstats"></div>
+
+    <script>
+        let isFetching = false;
+        let lastFetchTime = 0;
+        let currentlyVisible = false;
+        let lastJsonHash = '';
+
+        function jsonHash(j) {
+            // Simple hash to detect if data changed
+            return JSON.stringify(j);
+        }
+
+        function getAccuracyColor(pct) {
+            const r = pct < 50 ? 255 : Math.round(255 - (pct - 50) * 5.1);
+            const g = pct > 50 ? 255 : Math.round(pct * 5.1);
+            return `rgb(${r},${g},50)`;
+        }
+
+        // delta > 0 means BETTER when higherIsBetter=true, worse for TTK
+        function deltaHtml(current, avg, higherIsBetter, decimals = 1) {
+            if (avg === undefined || avg === null) return '';
+            const delta = parseFloat(current) - parseFloat(avg);
+            if (Math.abs(delta) < 0.005) return '';
+            const better = higherIsBetter ? delta > 0 : delta < 0;
+            const color = better ? '#4dff6e' : '#ff4d4d';
+            const arrow = better ? '&#9650;' : '&#9660;';
+            const sign = delta > 0 ? '+' : '';
+            return `<span style="font-size:9px;color:${color};display:block;line-height:1.2">${arrow} ${sign}${delta.toFixed(decimals)} <span style="opacity:0.5;color:rgba(255,255,255,0.6)">/ avg ${parseFloat(avg).toFixed(decimals)}</span></span>`;
+        }
+
+        function buildHtml(j) {
+            const showAcc = j.show_accuracy !== false;
+            const showTTK = j.show_ttk !== false;
+            const showSH = j.show_shots_hits !== false;
+            const showEff = j.show_efficiency === true;
+            const showAvgs = j.show_avgs === true;
+
+            let headerHtml = `<div class="ks-header">`;
+            headerHtml += `<span class="col-name col-label">Bot</span>`;
+            if (showAcc) headerHtml += `<span class="col-stat col-label">Acc%</span>`;
+            if (showTTK) headerHtml += `<span class="col-stat col-label">TTK</span>`;
+            if (showSH) headerHtml += `<span class="col-stat col-label">Hits/Shots</span>`;
+            if (showEff) headerHtml += `<span class="col-stat col-label">Eff%</span>`;
+            headerHtml += `</div>`;
+
+            let rowsHtml = '';
+            j.bots.forEach((bot) => {
+                const acc = parseFloat(bot.accuracy) || 0;
+                const color = getAccuracyColor(acc);
+                rowsHtml += `<div class="ks-row">`;
+                rowsHtml += `<span class="col-name">${bot.name}</span>`;
+                if (showAcc) {
+                    const dHtml = (showAvgs && bot.avg_accuracy != null)
+                        ? deltaHtml(bot.accuracy, bot.avg_accuracy, true, 1) : '';
+                    rowsHtml += `
+                    <span class="col-stat">
+                        <span style="color:${color};font-weight:700">${bot.accuracy}%</span>
+                        <div class="accuracy-bar">
+                            <div class="accuracy-fill" style="width:${acc}%;background:${color}"></div>
+                        </div>
+                        ${dHtml}
+                    </span>`;
+                }
+                if (showTTK) {
+                    const dHtml = (showAvgs && bot.avg_ttk != null)
+                        ? deltaHtml(bot.ttk, bot.avg_ttk, false, 2) : '';
+                    rowsHtml += `<span class="col-stat">${bot.ttk}s${dHtml}</span>`;
+                }
+                if (showSH) {
+                    let dHtml = '';
+                    if (showAvgs && bot.avg_hits != null) {
+                        const dHits = parseInt(bot.hits) - Math.round(parseFloat(bot.avg_hits));
+                        const better = dHits > 0;
+                        const col2 = better ? '#4dff6e' : (dHits < 0 ? '#ff4d4d' : 'rgba(255,255,255,0.4)');
+                        const arrow = dHits > 0 ? '&#9650;' : (dHits < 0 ? '&#9660;' : '');
+                        const sign = dHits >= 0 ? '+' : '';
+                        dHtml = `<span style="font-size:9px;color:${col2};display:block;line-height:1.2">${arrow} ${sign}${dHits} <span style="opacity:0.5;color:rgba(255,255,255,0.6)">/ avg ${Math.round(parseFloat(bot.avg_hits))}/${Math.round(parseFloat(bot.avg_shots))}</span></span>`;
+                    }
+                    rowsHtml += `<span class="col-stat">${bot.hits}/${bot.shots}${dHtml}</span>`;
+                }
+                if (showEff) {
+                    const dHtml = (showAvgs && bot.avg_efficiency != null)
+                        ? deltaHtml(bot.efficiency, bot.avg_efficiency, true, 1) : '';
+                    rowsHtml += `<span class="col-stat">${bot.efficiency}%${dHtml}</span>`;
+                }
+                rowsHtml += `</div>`;
+            });
+
+            return `
+                <div class="ks-title">Kill Stats</div>
+                <div class="ks-table">${headerHtml}${rowsHtml}</div>`;
+        }
+
+        function render(j) {
+            const el = document.getElementById('killstats');
+            const hash = jsonHash(j);
+
+            // Données identiques → rien à faire
+            if (hash === lastJsonHash) return;
+            lastJsonHash = hash;
+
+            const shouldShow = j.visible && j.bots && j.bots.length > 0;
+
+            if (!shouldShow) {
+                if (currentlyVisible) {
+                    el.classList.remove('animate-in');
+                    el.classList.add('animate-out');
+                    setTimeout(() => {
+                        el.classList.remove('visible', 'animate-out');
+                        currentlyVisible = false;
+                    }, 400);
+                }
+                return;
+            }
+
+            // Appliquer theme + opacity
+            document.documentElement.style.setProperty('--op', j.opacity || 0.9);
+            el.className = 'theme-' + (j.theme || 'dark');
+
+            // Réécrire le contenu seulement si données changées (déjà garanti par le hash)
+            el.innerHTML = buildHtml(j);
+
+            if (!currentlyVisible) {
+                // Première apparition : animer
+                el.classList.add('visible', 'animate-in');
+                currentlyVisible = true;
+            } else {
+                // Données mises à jour sans masquage : pas d'animation
+                el.classList.add('visible');
+            }
+        }
+
+        async function update() {
+            const now = Date.now();
+            if (isFetching && now - lastFetchTime > 500) isFetching = false;
+            if (isFetching) return;
+            isFetching = true;
+            lastFetchTime = now;
+            try {
+                const r = await fetch('kovaaks_killstats.json?t=' + now);
+                if (!r.ok) { isFetching = false; return; }
+                const j = await r.json();
+                render(j);
+            } catch (e) { }
+            isFetching = false;
+        }
+
+        setInterval(update, 200);
+        update();
+    </script>
+</body>
+
+</html>

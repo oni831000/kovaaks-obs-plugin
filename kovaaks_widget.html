@@ -1,0 +1,1246 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Nosifer&family=Permanent+Marker&family=Pirata+One&family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap"
+        rel="stylesheet">
+    <style id="custom-css-tag"></style>
+    <style>
+        :root {
+            --op: 0.9;
+            --anchor-y: flex-end;
+            --anchor-x: flex-start;
+            --title-align: center;
+            --text-align: left;
+        }
+
+        @font-face {
+            font-family: 'HUNTRIX';
+            src: url('huntrix.ttf') format('truetype');
+            font-weight: normal;
+            font-style: normal;
+        }
+
+        @font-face {
+            font-family: 'Sukajan';
+            src: url('sukajan.otf') format('opentype');
+            font-weight: normal;
+            font-style: normal;
+        }
+
+        html,
+        body {
+            height: 100vh;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: transparent;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            justify-content: var(--anchor-y);
+            align-items: var(--anchor-x);
+            padding: 15px;
+            box-sizing: border-box;
+        }
+
+        .widget {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding: 25px;
+            border-radius: 20px;
+            min-width: 250px;
+            width: fit-content;
+            transition: all 0.3s;
+        }
+
+        .widget:empty {
+            display: none !important;
+        }
+
+        .animate-box {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            opacity: 0;
+        }
+
+        .sec-title {
+            text-align: var(--title-align) !important;
+            font-size: 10px;
+            font-weight: 900;
+            letter-spacing: 2px;
+            color: rgba(255, 255, 255, 0.5);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding-bottom: 6px;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            display: block;
+            width: 100%;
+        }
+
+        .rotate-title {
+            text-align: var(--title-align) !important;
+            width: 100%;
+            flex-shrink: 0;
+            margin-bottom: 8px;
+            display: block;
+        }
+
+        .widget.fixed-size-mode {
+            position: relative;
+            overflow: hidden;
+        }
+
+        .fixed-size-body {
+            position: relative;
+            width: 100%;
+        }
+
+        .widget.fixed-size-mode .section-slot.ghost {
+            visibility: hidden;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            width: 100%;
+            text-align: var(--text-align);
+        }
+
+        .widget.fixed-size-mode .section-slot.real {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            display: none;
+            flex-direction: column;
+            gap: 8px;
+            width: 100%;
+        }
+
+        .widget.fixed-size-mode .section-slot.real.active {
+            display: flex;
+        }
+
+        .row-title {
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            color: rgba(255, 255, 255, 0.45);
+            text-transform: uppercase;
+            margin-bottom: 2px;
+            text-align: var(--text-align);
+        }
+
+        .content {
+            display: block;
+            width: 100%;
+            text-align: var(--text-align);
+        }
+
+        .content .val-item {
+            display: inline-flex;
+            vertical-align: middle;
+        }
+
+        .content .sep {
+            display: inline;
+            vertical-align: middle;
+        }
+
+        .val-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .val-item.layout-vertical {
+            display: inline-flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1px;
+        }
+
+        .v-label {
+            font-size: 13px;
+            opacity: 0.6;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .v-text {
+            font-size: 15px;
+            font-weight: 700;
+            transition: color 0.3s;
+        }
+
+        .sep {
+            opacity: 0.2;
+        }
+
+        .color-swatch {
+            width: 14px;
+            height: 14px;
+            border-radius: 3px;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
+        }
+
+        @keyframes animFade {
+            0% {
+                opacity: 0;
+            }
+
+            100% {
+                opacity: 1;
+            }
+        }
+
+        .anim-fade {
+            animation: animFade 0.8s ease forwards;
+        }
+
+        @keyframes animSlideUp {
+            0% {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .anim-slide-up {
+            animation: animSlideUp 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        }
+
+        @keyframes animSlideDown {
+            0% {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .anim-slide-down {
+            animation: animSlideDown 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        }
+
+        @keyframes animSlideLeft {
+            0% {
+                opacity: 0;
+                transform: translateX(30px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .anim-slide-left {
+            animation: animSlideLeft 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        }
+
+        @keyframes animSlideRight {
+            0% {
+                opacity: 0;
+                transform: translateX(-30px);
+            }
+
+            100% {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .anim-slide-right {
+            animation: animSlideRight 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        }
+
+        @keyframes animZoomIn {
+            0% {
+                opacity: 0;
+                transform: scale(0.85);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        .anim-zoom-in {
+            animation: animZoomIn 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        }
+
+        @keyframes animZoomOut {
+            0% {
+                opacity: 0;
+                transform: scale(1.15);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        .anim-zoom-out {
+            animation: animZoomOut 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        }
+
+        @keyframes animFlipX {
+            0% {
+                opacity: 0;
+                transform: perspective(400px) rotateX(90deg);
+            }
+
+            100% {
+                opacity: 1;
+                transform: perspective(400px) rotateX(0deg);
+            }
+        }
+
+        .anim-flip-x {
+            animation: animFlipX 0.8s ease-out forwards;
+        }
+
+        @keyframes animFlipY {
+            0% {
+                opacity: 0;
+                transform: perspective(400px) rotateY(90deg);
+            }
+
+            100% {
+                opacity: 1;
+                transform: perspective(400px) rotateY(0deg);
+            }
+        }
+
+        .anim-flip-y {
+            animation: animFlipY 0.8s ease-out forwards;
+        }
+
+        @keyframes animBlur {
+            0% {
+                opacity: 0;
+                filter: blur(10px);
+            }
+
+            100% {
+                opacity: 1;
+                filter: blur(0px);
+            }
+        }
+
+        .anim-blur {
+            animation: animBlur 0.8s ease forwards;
+        }
+
+        .theme-dark {
+            background: rgba(15, 15, 15, var(--op)) !important;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .theme-glass {
+            background: rgba(255, 255, 255, calc(var(--op) / 4)) !important;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .theme-neon {
+            background: rgba(0, 0, 0, var(--op)) !important;
+            border: 1px solid #00f2ff;
+            box-shadow: 0 0 15px #00f2ff55;
+            color: #00f2ff;
+        }
+
+        .theme-purple {
+            background: rgba(26, 0, 46, var(--op)) !important;
+            border: 1px solid #bc13fe;
+            box-shadow: 0 0 15px #bc13fe55;
+        }
+
+        .theme-solar {
+            background: rgba(0, 43, 54, var(--op)) !important;
+            border: 1px solid #268bd2;
+            color: #839496;
+        }
+
+        .theme-crt {
+            background: rgba(0, 40, 0, var(--op)) !important;
+            border: 2px solid #0f0;
+            font-family: 'Share Tech Mono';
+            color: #0f0;
+        }
+
+        .theme-red {
+            background: rgba(40, 0, 0, var(--op)) !important;
+            border: 1px solid #f00;
+        }
+
+        .theme-green {
+            background: rgba(0, 40, 0, var(--op)) !important;
+            border: 1px solid #0f0;
+        }
+
+        .theme-ocean {
+            background: rgba(0, 30, 50, var(--op)) !important;
+            border: 1px solid #0077be;
+        }
+
+        .theme-gold {
+            background: rgba(30, 30, 0, var(--op)) !important;
+            border: 1px solid #ffd700;
+            color: #ffd700;
+        }
+
+        .theme-minimal {
+            background: transparent !important;
+            padding: 0;
+            box-shadow: none;
+            border: none;
+        }
+
+        @keyframes heartbeat {
+
+            0%,
+            100% {
+                box-shadow: 0 0 10px #ff000088, inset 0 0 20px #550000;
+            }
+
+            50% {
+                box-shadow: 0 0 30px #ff0000, inset 0 0 40px #aa0000;
+            }
+        }
+
+        .theme-blood {
+            background: linear-gradient(180deg, rgba(20, 0, 0, var(--op)) 0%, rgba(60, 0, 0, var(--op)) 100%) !important;
+            border-top: 3px solid #ff0000;
+            border-bottom: 8px solid #8b0000;
+            border-radius: 5px;
+            animation: heartbeat 1.5s infinite;
+        }
+
+        .theme-blood .sec-title {
+            font-family: 'Nosifer', cursive;
+            color: #ff0000;
+            font-size: 13px;
+            text-transform: none;
+            text-shadow: 2px 2px 0px #000;
+            padding-bottom: 10px;
+            opacity: 1;
+        }
+
+        .theme-blood .row-title {
+            font-family: 'Nosifer', cursive;
+            color: #ff0000;
+            font-size: 9px;
+            opacity: 0.8;
+            text-transform: none;
+            text-shadow: 1px 1px 0px #000;
+        }
+
+        .theme-blood .v-text,
+        .theme-blood .v-label {
+            color: #ffb3b3;
+            text-shadow: 1px 1px 2px #000;
+        }
+
+        .theme-emo {
+            background: repeating-linear-gradient(45deg, rgba(15, 15, 15, var(--op)), rgba(15, 15, 15, var(--op)) 10px, rgba(25, 0, 10, var(--op)) 10px, rgba(25, 0, 10, var(--op)) 20px) !important;
+            border: 3px solid #ff0080;
+        }
+
+        .theme-emo .sec-title {
+            font-family: 'Permanent Marker', cursive;
+            color: #ff0080;
+            font-size: 14px;
+            text-transform: none;
+            opacity: 1;
+        }
+
+        .theme-emo .row-title {
+            font-family: 'Permanent Marker', cursive;
+            color: #ff0080;
+            font-size: 11px;
+            opacity: 0.9;
+            text-transform: none;
+        }
+
+        .theme-emo .v-text {
+            font-family: 'Permanent Marker', cursive;
+            color: #fff;
+            letter-spacing: 1px;
+        }
+
+        .theme-goth {
+            background: radial-gradient(circle, rgba(40, 40, 40, var(--op)) 0%, rgba(10, 10, 10, var(--op)) 100%) !important;
+            border: 4px double #555;
+            box-shadow: inset 0 0 30px #000;
+            border-radius: 15px 15px 0 0;
+        }
+
+        .theme-goth .sec-title {
+            font-family: 'Pirata One', cursive;
+            color: #888;
+            font-size: 20px;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            text-shadow: 2px 2px 4px #000;
+            opacity: 1;
+            border-bottom: 1px solid #333;
+            padding-bottom: 3px;
+        }
+
+        .theme-goth .row-title {
+            font-family: 'Pirata One', cursive;
+            color: #888;
+            font-size: 13px;
+            opacity: 0.9;
+            text-transform: none;
+        }
+
+        .theme-goth .v-text,
+        .theme-goth .v-label {
+            font-family: 'Times New Roman', serif;
+            color: #ccc;
+            font-style: italic;
+        }
+
+        .theme-lg56 {
+            background: linear-gradient(135deg, rgba(20, 10, 45, var(--op)) 0%, rgba(10, 5, 20, var(--op)) 100%) !important;
+            border: 2px solid #00f2ff;
+            border-radius: 12px;
+            box-shadow: 0 0 15px rgba(0, 242, 255, 0.4), inset 0 0 10px rgba(188, 19, 254, 0.2);
+            color: #ffffff;
+        }
+
+        .theme-lg56 .sec-title {
+            font-family: 'Orbitron', sans-serif;
+            color: #00f2ff;
+            font-size: 14px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            border-bottom: 1px solid rgba(0, 242, 255, 0.3);
+            text-shadow: 0 0 5px #00f2ff;
+            opacity: 1;
+        }
+
+        .theme-lg56 .row-title {
+            font-family: 'Orbitron', sans-serif;
+            color: #bc13fe;
+            font-size: 11px;
+            text-shadow: 0 0 3px rgba(188, 19, 254, 0.8);
+            opacity: 0.9;
+        }
+
+        .theme-lg56 .v-label {
+            color: #bc13fe;
+            font-weight: 700;
+            opacity: 1;
+        }
+
+        .theme-lg56 .v-text {
+            font-family: 'Orbitron', sans-serif;
+            color: #ffffff;
+            text-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
+            font-weight: 400;
+        }
+
+        /* THX */
+        @keyframes thxStatic {
+            0% {
+                background-position: 0 0, 0 0;
+            }
+
+            20% {
+                background-position: -5px 5px, 5px -5px;
+            }
+
+            40% {
+                background-position: 5px -5px, -5px 5px;
+            }
+
+            60% {
+                background-position: -5px 0, 5px 0;
+            }
+
+            80% {
+                background-position: 0 -5px, 0 5px;
+            }
+
+            100% {
+                background-position: 3px -3px, -3px 3px;
+            }
+        }
+
+        @keyframes thxFlicker {
+            0% {
+                opacity: 1;
+            }
+
+            10% {
+                opacity: 0.85;
+            }
+
+            11% {
+                opacity: 1;
+            }
+
+            45% {
+                opacity: 0.95;
+            }
+
+            46% {
+                opacity: 0.6;
+            }
+
+            48% {
+                opacity: 1;
+            }
+
+            80% {
+                opacity: 0.9;
+            }
+
+            100% {
+                opacity: 1;
+            }
+        }
+
+        @keyframes thxChromaJitter {
+
+            0%,
+            23%,
+            28%,
+            70%,
+            73%,
+            100% {
+                text-shadow: 2px 0px 0px rgba(255, 0, 0, 0.6), -2px 0px 0px rgba(0, 150, 255, 0.6);
+            }
+
+            24% {
+                text-shadow: 4px 0px 0px rgba(255, 0, 0, 0.8), -1px 0px 0px rgba(0, 150, 255, 0.4);
+            }
+
+            26% {
+                text-shadow: 1px 0px 0px rgba(255, 0, 0, 0.5), -4px 0px 0px rgba(0, 150, 255, 0.8);
+            }
+
+            71% {
+                text-shadow: 1px 1px 0px rgba(255, 0, 0, 0.7), -2px -1px 0px rgba(0, 150, 255, 0.5);
+            }
+        }
+
+        .theme-thx {
+            background: rgba(5, 5, 5, var(--op)) !important;
+            border: 2px solid rgba(255, 255, 255, 0.4);
+            border-radius: 0px !important;
+            color: #fff;
+            position: relative;
+            overflow: hidden;
+            box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.9);
+        }
+
+        .theme-thx::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image: repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255, 255, 255, 0.06) 2px, rgba(255, 255, 255, 0.06) 4px), repeating-linear-gradient(-45deg, transparent, transparent 2px, rgba(255, 255, 255, 0.05) 2px, rgba(255, 255, 255, 0.05) 4px);
+            animation: thxStatic 0.15s steps(2) infinite;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .theme-thx::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.2) 50%);
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        .theme-thx .animate-box {
+            position: relative;
+            z-index: 3;
+        }
+
+        .theme-thx .sec-title {
+            font-family: 'Arial Black', Impact, sans-serif;
+            color: #fff;
+            font-size: 16px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            border-bottom: 2px dashed rgba(255, 255, 255, 0.4);
+            padding-bottom: 8px;
+            animation: thxChromaJitter 4s infinite linear, thxFlicker 3s infinite linear;
+        }
+
+        .theme-thx .row-title {
+            font-family: 'Arial Black', Impact, sans-serif;
+            color: #ddd;
+            font-size: 12px;
+            animation: thxChromaJitter 5s infinite reverse linear, thxFlicker 3s infinite linear;
+        }
+
+        .theme-thx .v-label {
+            color: #aaa;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            animation: thxChromaJitter 3.5s infinite linear, thxFlicker 3s infinite linear;
+        }
+
+        .theme-thx .v-text {
+            color: #fff;
+            font-weight: 900;
+            animation: thxChromaJitter 2.8s infinite linear, thxFlicker 3s infinite linear;
+        }
+
+
+        .theme-shikuretto {
+            background: linear-gradient(135deg, rgba(25, 5, 5, var(--op)) 0%, rgba(5, 5, 5, var(--op)) 100%) !important;
+            border: 2px solid #1aa3ff;
+            border-radius: 8px !important;
+            box-shadow: 0 0 20px rgba(255, 26, 26, 0.3), inset 0 0 20px rgba(255, 26, 26, 0.2);
+            color: #fff;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .theme-shikuretto::before {
+            content: "";
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(45deg, transparent 45%, rgba(173, 15, 15, 0.05) 48%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 26, 26, 0.05) 52%, transparent 55%);
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .theme-shikuretto .animate-box,
+        .theme-shikuretto .row {
+            position: relative;
+            z-index: 2;
+        }
+
+        .theme-shikuretto .sec-title,
+        .theme-shikuretto .row-title,
+        .theme-shikuretto .v-label {
+            font-family: 'HUNTRIX', sans-serif;
+            background: linear-gradient(170deg, #7bc1f2 0%, #ffffff 42%, #226ebf 48%, #6dbff2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            filter: drop-shadow(2px 0px 0px #000) drop-shadow(-2px 0px 0px #000) drop-shadow(0px 2px 0px #000) drop-shadow(0px -2px 0px #000) drop-shadow(3px 3px 5px rgba(0, 0, 0, 0.8));
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        .theme-shikuretto .sec-title {
+            font-size: 18px;
+            border-bottom: 1px solid rgba(255, 26, 26, 0.4);
+            padding-bottom: 6px;
+            margin-bottom: 6px;
+        }
+
+        .theme-shikuretto .row-title {
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+
+        .theme-shikuretto .v-label {
+            font-size: 14px;
+            font-weight: 900;
+        }
+
+        .theme-shikuretto .v-text {
+            font-family: 'Orbitron', sans-serif;
+            color: #ffffff;
+            font-size: 15px;
+            font-weight: 700;
+            text-shadow: 2px 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 0 0 10px rgba(255, 26, 26, 0.4);
+        }
+
+        .theme-sukajan {
+            background: linear-gradient(135deg, rgba(25, 5, 5, var(--op)) 0%, rgba(5, 5, 5, var(--op)) 100%) !important;
+            border: 2px solid #1aa3ff;
+            border-radius: 8px !important;
+            box-shadow: 0 0 20px rgba(255, 26, 26, 0.3), inset 0 0 20px rgba(255, 26, 26, 0.2);
+            color: #fff;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .theme-sukajan::before {
+            content: "";
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(45deg, transparent 45%, rgba(255, 26, 26, 0.05) 48%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 26, 26, 0.05) 52%, transparent 55%);
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .theme-sukajan .animate-box,
+        .theme-sukajan .row {
+            position: relative;
+            z-index: 2;
+        }
+
+        .theme-sukajan .sec-title,
+        .theme-sukajan .row-title,
+        .theme-sukajan .v-label {
+            font-family: 'Sukajan', sans-serif;
+            background: linear-gradient(170deg, #7bc1f2 0%, #ffffff 42%, #226ebf 48%, #6dbff2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            filter: drop-shadow(2px 0px 0px #000) drop-shadow(-2px 0px 0px #000) drop-shadow(0px 2px 0px #000) drop-shadow(0px -2px 0px #000) drop-shadow(3px 3px 5px rgba(0, 0, 0, 0.8));
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        .theme-sukajan .sec-title {
+            font-size: 18px;
+            border-bottom: 1px solid rgba(255, 26, 26, 0.4);
+            padding-bottom: 6px;
+            margin-bottom: 6px;
+        }
+
+        .theme-sukajan .row-title {
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+
+        .theme-sukajan .v-label {
+            font-size: 14px;
+            font-weight: 900;
+        }
+
+        .theme-sukajan .v-text {
+            font-family: 'Orbitron', sans-serif;
+            color: #ffffff;
+            font-size: 15px;
+            font-weight: 700;
+            text-shadow: 2px 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 0 0 10px rgba(255, 26, 26, 0.4);
+        }
+
+        .theme-shikuretto-dark {
+            background: linear-gradient(135deg, rgba(25, 5, 5, var(--op)) 0%, rgba(5, 5, 5, var(--op)) 100%) !important;
+            border: 2px solid #ff1a1a;
+            border-radius: 8px !important;
+            box-shadow: 0 0 20px rgba(255, 26, 26, 0.3), inset 0 0 20px rgba(255, 26, 26, 0.2);
+            color: #fff;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .theme-shikuretto-dark {
+            background: linear-gradient(135deg, rgba(25, 5, 5, var(--op)) 0%, rgba(5, 5, 5, var(--op)) 100%) !important;
+            border: 2px solid #1aa3ff;
+            border-radius: 8px !important;
+            box-shadow: 0 0 20px rgba(255, 26, 26, 0.3), inset 0 0 20px rgba(255, 26, 26, 0.2);
+            color: #fff;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .theme-shikuretto-dark::before {
+            content: "";
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(45deg, transparent 45%, rgba(173, 15, 15, 0.05) 48%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 26, 26, 0.05) 52%, transparent 55%);
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .theme-shikuretto-dark .animate-box,
+        .theme-shikuretto-dark .row {
+            position: relative;
+            z-index: 2;
+        }
+
+        .theme-shikuretto-dark .sec-title,
+        .theme-shikuretto-dark .row-title,
+        .theme-shikuretto-dark .v-label {
+            font-family: 'HUNTRIX', sans-serif;
+
+            background: linear-gradient(170deg, #6fdcff 0%, #ffffff 30%, #a4bdf5 60%, #84edff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+
+            filter: drop-shadow(2px 0px 0px #000) drop-shadow(-2px 0px 0px #000) drop-shadow(0px 2px 0px #000) drop-shadow(0px -2px 0px #000) drop-shadow(3px 3px 5px rgba(0, 0, 0, 0.8));
+
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        .theme-shikuretto-dark .sec-title {
+            font-size: 18px;
+            border-bottom: 1px solid rgba(255, 26, 26, 0.4);
+            padding-bottom: 6px;
+            margin-bottom: 6px;
+        }
+
+        .theme-shikuretto-dark .row-title {
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+
+        .theme-shikuretto-dark .v-label {
+            font-size: 14px;
+            font-weight: 900;
+        }
+
+        .theme-shikuretto-dark .v-text {
+            font-family: 'Orbitron', sans-serif;
+            color: #ffffff;
+            font-size: 15px;
+            font-weight: 700;
+            text-shadow: 2px 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 0 0 10px rgba(255, 26, 26, 0.4);
+        }
+
+        .theme-sukajan-dark {
+            background: linear-gradient(135deg, rgba(25, 5, 5, var(--op)) 0%, rgba(5, 5, 5, var(--op)) 100%) !important;
+            border: 2px solid #1aa3ff;
+            border-radius: 8px !important;
+            box-shadow: 0 0 20px rgba(255, 26, 26, 0.3), inset 0 0 20px rgba(255, 26, 26, 0.2);
+            color: #fff;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .theme-sukajan-dark::before {
+            content: "";
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(45deg, transparent 45%, rgba(255, 26, 26, 0.05) 48%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 26, 26, 0.05) 52%, transparent 55%);
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .theme-sukajan-dark .animate-box,
+        .theme-sukajan-dark .row {
+            position: relative;
+            z-index: 2;
+        }
+
+        .theme-sukajan-dark .sec-title,
+        .theme-sukajan-dark .row-title,
+        .theme-sukajan-dark .v-label {
+            font-family: 'Sukajan', sans-serif;
+
+            background: linear-gradient(170deg, #6fdcff 0%, #ffffff 30%, #a4bdf5 60%, #84edff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+
+            filter: drop-shadow(2px 0px 0px #000) drop-shadow(-2px 0px 0px #000) drop-shadow(0px 2px 0px #000) drop-shadow(0px -2px 0px #000) drop-shadow(3px 3px 5px rgba(0, 0, 0, 0.8));
+
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        .theme-sukajan-dark .sec-title {
+            font-size: 18px;
+            border-bottom: 1px solid rgba(255, 26, 26, 0.4);
+            padding-bottom: 6px;
+            margin-bottom: 6px;
+        }
+
+        .theme-sukajan-dark .row-title {
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+
+        .theme-sukajan-dark .v-label {
+            font-size: 14px;
+            font-weight: 900;
+        }
+
+        .theme-sukajan-dark .v-text {
+            font-family: 'Orbitron', sans-serif;
+            color: #ffffff;
+            font-size: 15px;
+            font-weight: 700;
+            text-shadow: 2px 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 0 0 10px rgba(255, 26, 26, 0.4);
+        }
+    </style>
+</head>
+
+<body>
+    <div id="widget" class="widget"></div>
+    <script>
+        let isFetching = false;
+        let lastLayoutKey = "";
+        let currentCss = null;
+        let knownSections = {};
+        let knownSectionOrder = [];
+        let lastFixedSize = false;
+        let lastAnimClass = "anim-slide-up";
+        let lastFetchTime = 0;
+
+        const statSignature = (stats) => stats.map(s => `${s.id}-${s.pos}-${s.section}`).join('|');
+
+        async function update() {
+            // Reset isFetching if stuck for more than 500ms (safety)
+            const now = Date.now();
+            if (isFetching && now - lastFetchTime > 500) isFetching = false;
+            if (isFetching) return;
+            isFetching = true;
+            lastFetchTime = now;
+
+            try {
+                const r = await fetch('kovaaks_stats.json?t=' + Date.now());
+                const j = await r.json();
+
+                document.documentElement.style.setProperty('--op', j.ui.opacity);
+
+                const newCss = j.ui.theme === "custom" ? (j.ui.css || "") : "";
+                if (currentCss !== newCss) {
+                    document.getElementById('custom-css-tag').innerHTML = newCss;
+                    currentCss = newCss;
+                }
+
+                document.documentElement.style.setProperty('--title-align', j.ui.title_alignment || "center");
+                document.documentElement.style.setProperty('--text-align', j.ui.content_align || "left");
+
+                // Force refresh des titres existants si déjà rendus (évite d'attendre un rebuild)
+                const titleAlign = j.ui.title_alignment || "center";
+                document.querySelectorAll('.sec-title, .rotate-title').forEach(el => {
+                    el.style.textAlign = titleAlign;
+                });
+
+                let anchor = j.ui.alignment || "bottom-left";
+                let justifyY = "flex-end"; let alignX = "flex-start";
+
+                if (anchor === "top-left") { justifyY = "flex-start"; alignX = "flex-start"; }
+                else if (anchor === "top-right") { justifyY = "flex-start"; alignX = "flex-end"; }
+                else if (anchor === "bottom-left") { justifyY = "flex-end"; alignX = "flex-start"; }
+                else if (anchor === "bottom-right") { justifyY = "flex-end"; alignX = "flex-end"; }
+
+                document.documentElement.style.setProperty('--anchor-y', justifyY);
+                document.documentElement.style.setProperty('--anchor-x', alignX);
+
+                const container = document.getElementById('widget');
+
+                if (!j.stats || j.stats.length === 0) {
+                    if (container.innerHTML !== "") container.innerHTML = "";
+                    lastLayoutKey = "";
+                    knownSections = {}; knownSectionOrder = [];
+                    isFetching = false; return;
+                }
+
+                let fixedModeActive = container.classList.contains('fixed-size-mode');
+                container.className = 'widget theme-' + j.ui.theme;
+                if (fixedModeActive) container.classList.add('fixed-size-mode');
+
+                let groups = {};
+                let uniqueSections = [];
+
+                j.stats.forEach(s => {
+                    let secName = s.section;
+                    if (!groups[secName]) {
+                        groups[secName] = { name: secName, rows: [], currentRow: [] };
+                        uniqueSections.push(secName);
+                    }
+                    if (s.pos === "newline" && groups[secName].currentRow.length > 0) {
+                        groups[secName].rows.push([...groups[secName].currentRow]);
+                        groups[secName].currentRow = [];
+                    }
+                    groups[secName].currentRow.push(s);
+                });
+
+                uniqueSections.forEach(k => {
+                    if (groups[k].currentRow.length > 0) {
+                        groups[k].rows.push(groups[k].currentRow);
+                    }
+                });
+
+                let activeSections = uniqueSections.map(k => groups[k]).filter(g => g.rows.length > 0);
+                if (activeSections.length === 0) { isFetching = false; return; }
+
+                let showTitles = j.ui.show_titles !== false;
+                let showRowLabels = j.ui.show_row_labels === true;
+                let animClass = "anim-" + (j.ui.anim_type || "slide-up");
+                let labelLayout = j.ui.label_layout || "horizontal";
+                let fixedSize = j.ui.fixed_size === true;
+                lastAnimClass = animClass;
+
+                // En mode fixed_size, le C++ envoie 1 section à la fois.
+                // On mémorise chaque section vue pour construire le ghost et tous les slots.
+                if (fixedSize) {
+                    activeSections.forEach(sec => {
+                        let rowsHtml = sec.rows.map(r => renderRow(r, showRowLabels, labelLayout)).join('');
+                        if (!knownSections[sec.name]) knownSectionOrder.push(sec.name);
+                        knownSections[sec.name] = { rowsHtml, rowCount: sec.rows.length };
+                    });
+                } else {
+                    // Mode normal : reset de la mémoire si on désactive fixed_size
+                    knownSections = {};
+                    knownSectionOrder = [];
+                }
+
+                // Clé de layout : en fixed_size, on inclut toutes les sections connues
+                let sigForKey = fixedSize
+                    ? knownSectionOrder.join('|') + '|cur:' + (activeSections[0] ? activeSections[0].name : '')
+                    : statSignature(j.stats);
+                let layoutKey = `theme:${j.ui.theme}|anim:${j.ui.anim_type}|titles:${showTitles}|rows:${showRowLabels}|lbl:${labelLayout}|align:${j.ui.content_align}|titlealign:${j.ui.title_alignment}|fixed:${fixedSize}|sig:${sigForKey}`;
+
+                if (layoutKey !== lastLayoutKey) {
+                    let html = "";
+                    let currentSecName = activeSections[0] ? activeSections[0].name : "";
+
+                    if (fixedSize && knownSectionOrder.length > 1) {
+                        // Ghost : section avec le plus de rows parmi les connues
+                        let ghostName = knownSectionOrder.reduce((best, name) =>
+                            (knownSections[name].rowCount > knownSections[best].rowCount) ? name : best,
+                            knownSectionOrder[0]);
+
+                        if (showTitles) html += `<div class="rotate-title sec-title" id="rotate-sec-title">${currentSecName}</div>`;
+                        html += `<div class="fixed-size-body">`;
+                        html += `<div class="section-slot ghost">${knownSections[ghostName].rowsHtml}</div>`;
+
+                        knownSectionOrder.forEach((name, idx) => {
+                            let isActive = name === currentSecName;
+                            let cls = `section-slot real${isActive ? ` active animate-box ${animClass}` : ""}`;
+                            html += `<div class="${cls}" data-sec-name="${name}">${knownSections[name].rowsHtml}</div>`;
+                        });
+                        html += `</div>`;
+
+                        container.innerHTML = html;
+                        container.classList.add('fixed-size-mode');
+
+                    } else if (fixedSize && knownSectionOrder.length === 1) {
+                        // Première section — affichage normal en attendant les suivantes
+                        container.classList.remove('fixed-size-mode');
+                        html += `<div class="animate-box ${animClass}">`;
+                        if (showTitles) html += `<div class="sec-title">${currentSecName}</div>`;
+                        activeSections[0].rows.forEach(r => { html += renderRow(r, showRowLabels, labelLayout); });
+                        html += `</div>`;
+                        container.innerHTML = html;
+
+                    } else {
+                        container.classList.remove('fixed-size-mode');
+                        activeSections.forEach((sec, idx) => {
+                            let margin = idx < activeSections.length - 1 ? "margin-bottom: 15px;" : "";
+                            let applyAnim = (activeSections.length === 1) ? animClass : "anim-fade";
+                            html += `<div style="${margin}" class="animate-box ${applyAnim}">`;
+                            if (showTitles) html += `<div class="sec-title">${sec.name}</div>`;
+                            sec.rows.forEach(r => { html += renderRow(r, showRowLabels, labelLayout); });
+                            html += `</div>`;
+                        });
+                        container.innerHTML = html;
+                    }
+
+                    lastLayoutKey = layoutKey;
+
+                } else if (fixedSize && knownSectionOrder.length > 1) {
+                    // La section a changé : permutation CSS pure + update titre
+                    let currentSecName = activeSections[0] ? activeSections[0].name : "";
+                    const titleEl = document.getElementById('rotate-sec-title');
+                    if (titleEl) titleEl.innerHTML = currentSecName;
+                    container.querySelectorAll('.section-slot.real[data-sec-name]').forEach(el => {
+                        let name = el.getAttribute('data-sec-name');
+                        el.className = name === currentSecName
+                            ? `section-slot real active animate-box ${animClass}`
+                            : "section-slot real";
+                    });
+                }
+                else {
+                    j.stats.forEach(s => {
+                        let elVal = document.getElementById('val-' + s.id);
+                        if (elVal) {
+                            let val = s.val;
+                            try { if (val.startsWith("[")) val = JSON.parse(val).join(", "); } catch (e) { }
+                            if (s.id === "cross" && typeof val === "string") {
+                                let lastDot = val.lastIndexOf(".");
+                                if (lastDot !== -1) val = val.substring(0, lastDot);
+                            }
+                            let prefix = "";
+                            if (val.startsWith("#") && val.length === 7) {
+                                prefix = `<span class="color-swatch" style="background-color: ${val};"></span>`;
+                            }
+                            let newHTML = prefix + val;
+                            if (elVal.innerHTML !== newHTML) { elVal.innerHTML = newHTML; }
+                        }
+
+                        let elLbl = document.getElementById('lbl-' + s.id);
+                        if (elLbl && elLbl.innerHTML !== s.label + ":") { elLbl.innerHTML = s.label + ":"; }
+
+                        let elRowLbl = document.getElementById('row-lbl-' + s.id);
+                        if (elRowLbl && elRowLbl.innerHTML !== s.label) { elRowLbl.innerHTML = s.label; }
+                    });
+                }
+
+            } catch (e) { }
+
+            isFetching = false;
+        }
+
+        function renderRow(items, showRowLabels, labelLayout) {
+            const content = items.map(i => {
+                let val = i.val;
+                try { if (val.startsWith("[")) val = JSON.parse(val).join(", "); } catch (e) { }
+                if (i.id === "cross" && typeof val === "string") {
+                    let lastDot = val.lastIndexOf(".");
+                    if (lastDot !== -1) val = val.substring(0, lastDot);
+                }
+                let prefix = "";
+                if (val.startsWith("#") && val.length === 7) {
+                    prefix = `<span class="color-swatch" style="background-color: ${val};"></span>`;
+                }
+
+                if (labelLayout === "vertical") {
+                    return `<div class="val-item layout-vertical"><span class="v-label" id="lbl-${i.id}">${i.label}</span><span class="v-text" id="val-${i.id}">${prefix}${val}</span></div>`;
+                } else {
+                    return `<div class="val-item"><span class="v-label" id="lbl-${i.id}">${i.label}:</span><span class="v-text" id="val-${i.id}">${prefix}${val}</span></div>`;
+                }
+            }).join('<span class="sep">|</span>');
+
+            let rowHtml = "";
+            if (showRowLabels && items.length > 0) {
+                rowHtml += `<div class="row-title" id="row-lbl-${items[0].id}">${items[0].label}</div>`;
+            }
+            rowHtml += `<div class="content">${content}</div>`;
+            return `<div style="width: 100%; text-align: var(--text-align); margin-top: 4px;">${rowHtml}</div>`;
+        }
+
+        setInterval(update, 100);
+        update();
+    </script>
+</body>
+
+</html>
