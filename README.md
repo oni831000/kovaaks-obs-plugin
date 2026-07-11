@@ -37,7 +37,7 @@ An OBS Studio plugin that tracks [KovaaK's FPS Aim Trainer](https://kovaaks.com/
 
 ## Fonts
 
-This project references two custom font themes ("Shikuretto"/Huntrix and "Sukajan") that are **not included** in this repo due to unclear licensing. To use those themes, supply your own `huntrix.ttf` and `sukajan.otf` files in the plugin's folder — or pick a different theme preset that doesn't require them.
+The "Shikuretto" (Huntrix) and "Sukajan" theme presets use custom fonts (`huntrix.ttf`, `sukajan.otf`) that aren't included in this repo. Download them yourself from [FontSpace](https://www.fontspace.com/category/anime) and drop them in the plugin's folder if you want to use those themes — otherwise, pick a different preset.
 
 ## License
 
