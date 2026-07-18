@@ -3,13 +3,8 @@
 #ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
-#include <d3d11.h>
-#pragma comment(lib, "d3d11.lib")
+#include <tlhelp32.h>
 #endif
-
-#include "imgui.h"
-#include "imgui_impl_win32.h"
-#include "imgui_impl_dx11.h"
 
 #ifndef OBS_VERSION
 #define OBS_VERSION(major, minor, patch) ((major << 24) | (minor << 16) | patch)
@@ -27,10 +22,12 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cctype>
 #include <set>
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <functional>
 #include <filesystem>
 
 using json = nlohmann::json;
@@ -38,7 +35,7 @@ using json = nlohmann::json;
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("kovaaks_plugin", "en-US")
 
-// KILL STATS — STRUCTURES
+// Kill stats structures
 struct KillStatBot {
     std::string name; // display name (may have duplicates)
     std::string key;  // unique position key: "bot_0", "bot_1"...
@@ -90,15 +87,13 @@ struct kovaaks_context {
 
     obs_hotkey_id hotkey_next = OBS_INVALID_HOTKEY_ID;
     obs_hotkey_id hotkey_prev = OBS_INVALID_HOTKEY_ID;
-    obs_hotkey_id hotkey_imgui = OBS_INVALID_HOTKEY_ID;
     obs_hotkey_id hotkey_show_killstats = OBS_INVALID_HOTKEY_ID;
-    obs_hotkey_id hotkey_graph          = OBS_INVALID_HOTKEY_ID;
-    obs_hotkey_id hotkey_evolution      = OBS_INVALID_HOTKEY_ID;
 
-    // JSON/INI cache — only re-read files every ~1s, not on every hotkey press
+    // JSON/INI cache: re-read only when the settings watcher detects a file change
     json cached_json = json::object();
     std::map<std::string, std::string> cached_ini;
     bool cache_valid = false;
+    bool kovaaks_running_last = false; // for logging start/stop transitions only
 
     // KillStats widget settings
     std::string killstats_theme       = "dark";
@@ -118,140 +113,9 @@ struct kovaaks_context {
     bool        showing_ks_preview = false; // Tracks whether fake preview data is being shown
 };
 
-// Global pointer for the ImGui thread
-static kovaaks_context* g_imgui_ctx = nullptr;
-// Thread-safe toggle triggered by the OBS hotkey
-static std::atomic<bool> g_imgui_running{false};
-static std::atomic<bool> g_imgui_toggle{false};
-static std::atomic<bool> g_graph_toggle{false};
-static std::atomic<bool> g_evolution_toggle{false};
-static std::thread g_imgui_thread;
+// Kill stats averages and gauntlet detection
 
-static ID3D11Device*            g_pd3dDevice            = nullptr;
-static ID3D11DeviceContext*     g_pd3dDeviceContext     = nullptr;
-static IDXGISwapChain*          g_pSwapChain            = nullptr;
-static ID3D11RenderTargetView*  g_mainRenderTargetView  = nullptr;
-
-static bool CreateDeviceD3D(HWND hWnd) {
-    DXGI_SWAP_CHAIN_DESC sd = {};
-    sd.BufferCount = 2;
-    sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    sd.BufferDesc.RefreshRate.Numerator = 60;
-    sd.BufferDesc.RefreshRate.Denominator = 1;
-    sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
-    sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    sd.OutputWindow = hWnd;
-    sd.SampleDesc.Count = 1;
-    sd.Windowed = TRUE;
-    sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
-    D3D_FEATURE_LEVEL featureLevel;
-    const D3D_FEATURE_LEVEL featureLevelArray[2] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0 };
-    if (D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
-        featureLevelArray, 2, D3D11_SDK_VERSION, &sd,
-        &g_pSwapChain, &g_pd3dDevice, &featureLevel, &g_pd3dDeviceContext) != S_OK)
-        return false;
-    ID3D11Texture2D* pBackBuffer;
-    g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
-    g_pd3dDevice->CreateRenderTargetView(pBackBuffer, nullptr, &g_mainRenderTargetView);
-    pBackBuffer->Release();
-    return true;
-}
-
-static void CleanupDeviceD3D() {
-    if (g_mainRenderTargetView) { g_mainRenderTargetView->Release(); g_mainRenderTargetView = nullptr; }
-    if (g_pSwapChain)           { g_pSwapChain->Release();           g_pSwapChain = nullptr; }
-    if (g_pd3dDeviceContext)    { g_pd3dDeviceContext->Release();    g_pd3dDeviceContext = nullptr; }
-    if (g_pd3dDevice)           { g_pd3dDevice->Release();           g_pd3dDevice = nullptr; }
-}
-
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
-// VKey-to-printable-character table for ImGui AddInputCharacter
-static void RawKeyToImGui(USHORT vkey, USHORT scanCode, bool isDown) {
-    ImGuiIO& io = ImGui::GetIO();
-
-    // Control keys
-    ImGuiKey imkey = ImGuiKey_None;
-    switch (vkey) {
-        case VK_BACK:      imkey = ImGuiKey_Backspace; break;
-        case VK_DELETE:    imkey = ImGuiKey_Delete;    break;
-        case VK_LEFT:      imkey = ImGuiKey_LeftArrow; break;
-        case VK_RIGHT:     imkey = ImGuiKey_RightArrow;break;
-        case VK_HOME:      imkey = ImGuiKey_Home;      break;
-        case VK_END:       imkey = ImGuiKey_End;       break;
-        case VK_RETURN:    imkey = ImGuiKey_Enter;     break;
-        case VK_ESCAPE:    imkey = ImGuiKey_Escape;    break;
-        case VK_TAB:       imkey = ImGuiKey_Tab;       break;
-        case VK_CONTROL:   imkey = ImGuiKey_LeftCtrl;  break;
-        case VK_SHIFT:     imkey = ImGuiKey_LeftShift; break;
-        case VK_MENU:      imkey = ImGuiKey_LeftAlt;   break;
-        case VK_UP:        imkey = ImGuiKey_UpArrow;   break;
-        case VK_DOWN:      imkey = ImGuiKey_DownArrow; break;
-        case 'A': imkey = ImGuiKey_A; break;
-        case 'C': imkey = ImGuiKey_C; break;
-        case 'V': imkey = ImGuiKey_V; break;
-        case 'X': imkey = ImGuiKey_X; break;
-        case 'Z': imkey = ImGuiKey_Z; break;
-    }
-    if (imkey != ImGuiKey_None) io.AddKeyEvent(imkey, isDown);
-
-    // Printable characters (key down only)
-    if (isDown && vkey != VK_BACK && vkey != VK_DELETE &&
-        vkey != VK_RETURN && vkey != VK_ESCAPE && vkey != VK_TAB) {
-        BYTE keyState[256] = {};
-        GetKeyboardState(keyState);
-        WCHAR buf[4] = {};
-        int result = ToUnicode(vkey, scanCode, keyState, buf, 4, 0);
-        if (result == 1 && buf[0] >= 32) io.AddInputCharacterUTF16(buf[0]);
-    }
-}
-
-static LRESULT WINAPI ImGuiWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam)) return true;
-    switch (msg) {
-        case WM_MOUSEACTIVATE:
-            return MA_NOACTIVATE;
-        case WM_INPUT: {
-            // Raw keyboard input — works without window focus
-            UINT size = 0;
-            GetRawInputData((HRAWINPUT)lParam, RID_INPUT, nullptr, &size, sizeof(RAWINPUTHEADER));
-            if (size > 0) {
-                std::vector<BYTE> buf(size);
-                if (GetRawInputData((HRAWINPUT)lParam, RID_INPUT, buf.data(), &size, sizeof(RAWINPUTHEADER)) == size) {
-                    RAWINPUT* raw = (RAWINPUT*)buf.data();
-                    if (raw->header.dwType == RIM_TYPEKEYBOARD) {
-                        USHORT vkey     = raw->data.keyboard.VKey;
-                        USHORT scanCode = raw->data.keyboard.MakeCode;
-                        bool   isDown   = !(raw->data.keyboard.Flags & RI_KEY_BREAK);
-                        RawKeyToImGui(vkey, scanCode, isDown);
-                    }
-                }
-            }
-            return 0;
-        }
-        case WM_SIZE:
-            if (g_pd3dDevice && wParam != SIZE_MINIMIZED) {
-                if (g_mainRenderTargetView) { g_mainRenderTargetView->Release(); g_mainRenderTargetView = nullptr; }
-                g_pSwapChain->ResizeBuffers(0, LOWORD(lParam), HIWORD(lParam), DXGI_FORMAT_UNKNOWN, 0);
-                ID3D11Texture2D* pBB;
-                g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBB));
-                g_pd3dDevice->CreateRenderTargetView(pBB, nullptr, &g_mainRenderTargetView);
-                pBB->Release();
-            }
-            return 0;
-        case WM_SYSCOMMAND:
-            if ((wParam & 0xfff0) == SC_KEYMENU) return 0;
-            break;
-        case WM_DESTROY:
-            PostQuitMessage(0);
-            return 0;
-    }
-    return DefWindowProcA(hWnd, msg, wParam, lParam);
-}
-
-// KILL STATS VIEWER — data structures
-
-// BotAvg defined here for g_graph_avgs (duplicate identical struct removed further down)
+// Used for the "vs your average over the last 10 runs" comparison in the kill stats widget
 struct BotAvg {
     float accuracy   = 0.0f;
     float ttk        = 0.0f;
@@ -261,29 +125,6 @@ struct BotAvg {
     int   count      = 0;
 };
 static std::map<std::string, BotAvg> ComputeAvgs(const std::string& folder, const std::string& exclude_path, int maxRuns);
-
-struct GraphRunPoint {
-    float value = 0.0f;
-};
-
-struct GraphBotSeries {
-    std::string                bot_name;
-    std::vector<GraphRunPoint> accuracy;
-    std::vector<GraphRunPoint> ttk;
-    std::vector<GraphRunPoint> efficiency;
-    std::vector<GraphRunPoint> shots;
-    std::vector<GraphRunPoint> hits;
-};
-
-static std::vector<GraphBotSeries>   g_graph_data;
-static std::map<std::string, BotAvg> g_graph_avgs;
-static std::mutex                    g_graph_mutex;
-static bool                          g_graph_data_dirty = false; // loaded on demand, not at startup
-static std::atomic<bool>             g_graph_loading{false};
-static std::atomic<bool>             g_graph_new_csv{false};   // signaled by video_tick to trigger a reload
-
-static std::vector<KillStatBot> ParseKillStatsCsv(const std::string& path);
-static std::string ExtractScenarioName(const std::string& path);
 
 // A real gauntlet run has at least one bot killed more than once (multiple kills on the same name).
 // Target-switching scenarios have exactly 1 kill per bot, so they're excluded.
@@ -295,1008 +136,14 @@ static bool IsGauntletRun(const std::vector<KillStatBot>& bots) {
     return true;
 }
 
-static void LoadGraphData(const std::string& csv_folder, int maxRuns) {
-    if (csv_folder.empty()) return;
-    try {
-        if (!std::filesystem::exists(csv_folder)) return;
-    } catch (...) { return; }
-    struct CsvEntry { std::string path; std::filesystem::file_time_type mtime; };
-    std::vector<CsvEntry> entries;
-    try {
-        for (auto& entry : std::filesystem::directory_iterator(csv_folder)) {
-            if (!entry.is_regular_file()) continue;
-            std::string fname = entry.path().filename().string();
-            if (fname.find(".csv") == std::string::npos) continue;
-            if (fname.find("Challenge") == std::string::npos) continue;
-            entries.push_back({entry.path().string(), entry.last_write_time()});
-        }
-    } catch (...) { return; }
-    std::sort(entries.begin(), entries.end(), [](const CsvEntry& a, const CsvEntry& b){ return a.mtime < b.mtime; });
-
-    try {
-        // Find the most recent gauntlet run and extract its scenario
-        std::string ref_scenario;
-        std::string ref_path;
-        for (int i = (int)entries.size()-1; i >= 0; i--) {
-            auto bots = ParseKillStatsCsv(entries[i].path);
-            if (IsGauntletRun(bots)) {
-                ref_path     = entries[i].path;
-                ref_scenario = ExtractScenarioName(ref_path);
-                blog(LOG_INFO, "[KovaaksPlugin] LoadGraphData: ref scenario = '%s'", ref_scenario.c_str());
-                break;
-            }
-        }
-        if (ref_path.empty()) {
-            std::lock_guard<std::mutex> lock(g_graph_mutex);
-            g_graph_data.clear();
-            g_graph_avgs.clear();
-            return;
-        }
-
-        // Filter: only gauntlet runs from the same scenario
-        std::vector<CsvEntry> filtered;
-        for (auto& e : entries) {
-            auto bots = ParseKillStatsCsv(e.path);
-            if (!IsGauntletRun(bots)) continue;
-            if (!ref_scenario.empty() && ExtractScenarioName(e.path) != ref_scenario) continue;
-            filtered.push_back(e);
-        }
-        if ((int)filtered.size() > maxRuns)
-            filtered.erase(filtered.begin(), filtered.end() - maxRuns);
-
-        std::map<std::string, GraphBotSeries> series_map;
-        blog(LOG_INFO, "[KovaaksPlugin] LoadGraphData: %d filtered runs for scenario '%s'",
-             (int)filtered.size(), ref_scenario.c_str());
-        for (auto& e : filtered) {
-            auto bots = ParseKillStatsCsv(e.path);
-            for (auto& b : bots) {
-                auto& s    = series_map[b.key];
-                s.bot_name = b.name;
-                s.accuracy.push_back({b.accuracy});
-                s.ttk.push_back({b.ttk});
-                s.efficiency.push_back({b.efficiency});
-                s.shots.push_back({(float)b.shots});
-                s.hits.push_back({(float)b.hits});
-            }
-        }
-
-        std::vector<GraphBotSeries>   new_data;
-        std::map<std::string, BotAvg> new_avgs;
-
-        auto last_bots = ParseKillStatsCsv(ref_path);
-        for (auto& b : last_bots) {
-            auto it = series_map.find(b.key);
-            if (it != series_map.end())
-                new_data.push_back(it->second);
-        }
-        new_avgs = ComputeAvgs(csv_folder, ref_path, maxRuns);
-
-        {
-            std::lock_guard<std::mutex> lock(g_graph_mutex);
-            g_graph_data = std::move(new_data);
-            g_graph_avgs = std::move(new_avgs);
-        }
-    } catch (...) {
-        blog(LOG_WARNING, "[KovaaksPlugin] LoadGraphData: exception caught, skipping.");
-    }
-}
-
-static void ImGuiMenuThread() {
-    try {
-    WNDCLASSEXA wc = { sizeof(WNDCLASSEXA), CS_CLASSDC, ImGuiWndProc, 0L, 0L,
-        GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, "KovaaksImGuiClass", nullptr };
-    ::RegisterClassExA(&wc);
-
-    int screenW = GetSystemMetrics(SM_CXSCREEN);
-    int screenH = GetSystemMetrics(SM_CYSCREEN);
-
-    HWND hwnd = ::CreateWindowExA(
-        WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
-        wc.lpszClassName, "Kovaaks Custom Info",
-        WS_POPUP, 0, 0, screenW, screenH,
-        nullptr, nullptr, wc.hInstance, nullptr);
-    SetLayeredWindowAttributes(hwnd, RGB(0, 0, 0), 0, LWA_COLORKEY);
-
-    // Register raw keyboard input — RIDEV_INPUTSINK receives input even without focus
-    RAWINPUTDEVICE rid;
-    rid.usUsagePage = 0x01; // Generic Desktop
-    rid.usUsage     = 0x06; // Keyboard
-    rid.dwFlags     = RIDEV_INPUTSINK;
-    rid.hwndTarget  = hwnd;
-    RegisterRawInputDevices(&rid, 1, sizeof(rid));
-
-    if (!CreateDeviceD3D(hwnd)) {
-        CleanupDeviceD3D();
-        ::UnregisterClassA(wc.lpszClassName, wc.hInstance);
-        return;
-    }
-
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGui::StyleColorsDark();
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding  = 8.0f;
-    style.FrameRounding   = 4.0f;
-    style.ItemSpacing     = ImVec2(8, 6);
-    style.WindowPadding   = ImVec2(14, 14);
-    style.Colors[ImGuiCol_WindowBg]       = ImVec4(0.10f, 0.10f, 0.13f, 0.95f);
-    style.Colors[ImGuiCol_FrameBg]        = ImVec4(0.18f, 0.18f, 0.22f, 1.0f);
-    style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.28f, 0.28f, 0.38f, 1.0f);
-    style.Colors[ImGuiCol_Button]         = ImVec4(0.25f, 0.40f, 0.65f, 1.0f);
-    style.Colors[ImGuiCol_ButtonHovered]  = ImVec4(0.35f, 0.50f, 0.75f, 1.0f);
-    style.Colors[ImGuiCol_TitleBgActive]  = ImVec4(0.15f, 0.25f, 0.45f, 1.0f);
-
-    ImGui_ImplWin32_Init(hwnd);
-    ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
-
-    bool show_menu      = false;
-    bool show_graph     = false;
-    bool show_evolution = false;
-    bool was_visible    = false;
-
-    // Thread-local input buffers, reloaded from ctx each time the menu opens
-    char lbl_buf[5][128] = {};
-    char val_buf[5][128] = {};
-    int  sec_buf[5]      = { 0, 0, 0, 0, 0 }; // 0-indexed
-    bool vis_buf[5]      = { false, false, false, false, false };
-    int  pos_buf[5]      = { 0, 0, 0, 0, 0 }; // 0=inline, 1=newline
-    bool buffers_loaded  = false;
-
-    while (g_imgui_running) {
-        auto frame_start = std::chrono::steady_clock::now();
-
-        // Process Win32 messages FIRST to drain the queue
-        MSG msg;
-        while (::PeekMessage(&msg, nullptr, 0U, 0U, PM_REMOVE)) {
-            ::TranslateMessage(&msg);
-            ::DispatchMessage(&msg);
-            if (msg.message == WM_QUIT) g_imgui_running = false;
-        }
-        if (!g_imgui_running) break;
-
-        // Read hotkey toggles (atomic, thread-safe)
-        bool expected = true;
-        if (g_imgui_toggle.compare_exchange_strong(expected, false)) {
-            show_menu = !show_menu;
-            if (show_menu) buffers_loaded = false;
-        }
-
-        bool expected2 = true;
-        if (g_graph_toggle.compare_exchange_strong(expected2, false)) {
-            show_graph = !show_graph;
-            if (show_graph) {
-                show_evolution = false; // close the other panel
-                std::lock_guard<std::mutex> lock(g_graph_mutex);
-                if (g_graph_data.empty()) g_graph_data_dirty = true;
-            }
-        }
-
-        bool expected3 = true;
-        if (g_evolution_toggle.compare_exchange_strong(expected3, false)) {
-            show_evolution = !show_evolution;
-            if (show_evolution) {
-                show_graph = false; // close the other panel
-                std::lock_guard<std::mutex> lock(g_graph_mutex);
-                if (g_graph_data.empty()) g_graph_data_dirty = true;
-            }
-        }
-
-        bool any_visible = show_menu || show_graph || show_evolution;
-        if (any_visible && !was_visible) {
-            ShowWindow(hwnd, SW_SHOWNA);
-            SetWindowLongPtrA(hwnd, GWL_EXSTYLE,
-                GetWindowLongPtrA(hwnd, GWL_EXSTYLE) & ~WS_EX_TRANSPARENT);
-            was_visible = true;
-        } else if (!any_visible && was_visible) {
-            ShowWindow(hwnd, SW_HIDE);
-            SetWindowLongPtrA(hwnd, GWL_EXSTYLE,
-                GetWindowLongPtrA(hwnd, GWL_EXSTYLE) | WS_EX_TRANSPARENT);
-            was_visible = false;
-        }
-
-        // Preload graph data in the background, even while menus are closed
-        {
-            bool need_load = g_graph_data_dirty;
-            if (!need_load) {
-                bool new_csv = true;
-                need_load = g_graph_new_csv.compare_exchange_strong(new_csv, false);
-            }
-            if (need_load && !g_graph_loading && g_imgui_ctx) {
-                std::string csv_folder = g_imgui_ctx->kovaaks_stats_folder.empty()
-                    ? g_imgui_ctx->kovaaks_save_folder : g_imgui_ctx->kovaaks_stats_folder;
-                if (!csv_folder.empty()) {
-                    g_graph_data_dirty = false;
-                    g_graph_loading    = true;
-                    std::thread([csv_folder]() {
-                        try {
-                            LoadGraphData(csv_folder, 10);
-                        } catch (...) {
-                            blog(LOG_WARNING, "[KovaaksPlugin] LoadGraphData thread: exception caught.");
-                        }
-                        g_graph_loading = false;
-                    }).detach();
-                }
-            }
-        }
-
-        if (any_visible) {
-            // Load values from ctx when the menu opens
-            if (show_menu && !buffers_loaded && g_imgui_ctx) {
-                for (int i = 0; i < kovaaks_context::CUSTOM_INFO_COUNT; i++) {
-                    strncpy_s(lbl_buf[i], sizeof(lbl_buf[i]), g_imgui_ctx->custom_info[i].label.c_str(), _TRUNCATE);
-                    strncpy_s(val_buf[i], sizeof(val_buf[i]), g_imgui_ctx->custom_info[i].value.c_str(), _TRUNCATE);
-                    sec_buf[i] = g_imgui_ctx->custom_info[i].sec_assignment - 1;
-                    vis_buf[i] = g_imgui_ctx->custom_info[i].visible;
-                    pos_buf[i] = (g_imgui_ctx->custom_info[i].pos == "newline") ? 1 : 0;
-                }
-                buffers_loaded = true;
-            }
-
-            ImGui_ImplDX11_NewFrame();
-            ImGui_ImplWin32_NewFrame();
-            ImGui::NewFrame();
-
-            ImVec2 win_size(620, 560);
-
-            if (show_menu) {
-                ImGui::SetNextWindowSize(win_size, ImGuiCond_Always);
-                ImGui::SetNextWindowPos(
-                    ImVec2((screenW - win_size.x) * 0.5f, (screenH - win_size.y) * 0.5f),
-                    ImGuiCond_Always);
-
-                bool p_open = true;
-                ImGui::Begin("Kovaaks Plugin Settings", &p_open,
-                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                    ImGuiWindowFlags_NoCollapse);
-
-            if (!g_imgui_ctx) {
-                ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "Waiting for OBS source...");
-                ImGui::TextDisabled("Please add a Kovaaks Tracker source in OBS.");
-            } else {
-                if (ImGui::BeginTabBar("MainTabs")) {
-
-                    // TAB 1: UI SETTINGS
-                    if (ImGui::BeginTabItem("UI Settings")) {
-                        ImGui::Spacing();
-
-                        // Theme
-                        const char* themes[] = {
-                            "Amuse Dark","Glass White","Neon Cyan","Midnight Purple",
-                            "Solarized","Retro CRT","Blood Red","Forest Green",
-                            "Ocean Deep","Gold Luxury","Bloodbath","Myspace Emo",
-                            "Gothic Graveyard","Minimalist","LG56 (Sci-Fi)","THX (Analog VHS)",
-                            "Shikuretto (Huntrix)","Shikuretto (Sukajan)",
-                            "Shiku (Huntrix Dark)","Shiku (Sukajan Dark)","Custom CSS"
-                        };
-                        const char* theme_ids[] = {
-                            "dark","glass","neon","purple","solar","crt","red","green",
-                            "ocean","gold","blood","emo","goth","minimal","lg56","thx",
-                            "shikuretto","sukajan","shikuretto-dark","sukajan-dark","custom"
-                        };
-                        static int theme_idx = 0;
-                        // Sync from ctx on open
-                        if (!buffers_loaded) {
-                            for (int t = 0; t < 21; t++)
-                                if (g_imgui_ctx->ui_theme == theme_ids[t]) { theme_idx = t; break; }
-                        }
-                        ImGui::SetNextItemWidth(240);
-                        if (ImGui::Combo("Theme", &theme_idx, themes, 21)) {
-                            g_imgui_ctx->ui_theme = theme_ids[theme_idx];
-                            g_imgui_ctx->section_dirty = true;
-                        }
-
-                        // Opacity
-                        ImGui::SetNextItemWidth(240);
-                        if (ImGui::SliderInt("Opacity (%)", &g_imgui_ctx->bg_opacity, 0, 100))
-                            g_imgui_ctx->section_dirty = true;
-
-                        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-
-                        // Animation
-                        const char* anims[] = {
-                            "Smooth Fade","Slide Up","Slide Down","Slide Left","Slide Right",
-                            "Zoom In","Zoom Out","3D Flip X","3D Flip Y","Cinematic Blur"
-                        };
-                        const char* anim_ids[] = {
-                            "fade","slide-up","slide-down","slide-left","slide-right",
-                            "zoom-in","zoom-out","flip-x","flip-y","blur"
-                        };
-                        static int anim_idx = 1;
-                        if (!buffers_loaded)
-                            for (int a = 0; a < 10; a++)
-                                if (g_imgui_ctx->anim_type == anim_ids[a]) { anim_idx = a; break; }
-                        ImGui::SetNextItemWidth(240);
-                        if (ImGui::Combo("Animation", &anim_idx, anims, 10)) {
-                            g_imgui_ctx->anim_type = anim_ids[anim_idx];
-                            g_imgui_ctx->section_dirty = true;
-                        }
-
-                        // Alignment
-                        const char* aligns[] = {
-                            "Bottom Left","Bottom Right","Top Left","Top Right"
-                        };
-                        const char* align_ids[] = {
-                            "bottom-left","bottom-right","top-left","top-right"
-                        };
-                        static int align_idx = 0;
-                        if (!buffers_loaded)
-                            for (int a = 0; a < 4; a++)
-                                if (g_imgui_ctx->alignment == align_ids[a]) { align_idx = a; break; }
-                        ImGui::SetNextItemWidth(240);
-                        if (ImGui::Combo("Anchor", &align_idx, aligns, 4)) {
-                            g_imgui_ctx->alignment = align_ids[align_idx];
-                            g_imgui_ctx->section_dirty = true;
-                        }
-
-                        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-
-                        // Checkboxes
-                        if (ImGui::Checkbox("Show Section Titles",  &g_imgui_ctx->show_titles))     g_imgui_ctx->section_dirty = true;
-                        if (ImGui::Checkbox("Show Row Labels",      &g_imgui_ctx->show_row_labels)) g_imgui_ctx->section_dirty = true;
-                        if (ImGui::Checkbox("Lock Widget Size",     &g_imgui_ctx->fixed_size))      g_imgui_ctx->section_dirty = true;
-
-                        ImGui::Spacing();
-                        if (ImGui::Checkbox("Auto-Rotation", &g_imgui_ctx->auto_rotate)) {
-                            g_imgui_ctx->manual_mode = false;
-                            g_imgui_ctx->current_section_idx = 0;
-                            g_imgui_ctx->rotation_timer = 0.0f;
-                            g_imgui_ctx->section_dirty = true;
-                        }
-                        if (g_imgui_ctx->auto_rotate) {
-                            ImGui::SameLine();
-                            ImGui::SetNextItemWidth(100);
-                            if (ImGui::SliderInt("Delay (s)", &g_imgui_ctx->rotation_delay, 1, 60))
-                                g_imgui_ctx->section_dirty = true;
-                        }
-
-                        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-
-                        // Label layout
-                        const char* lbl_layouts[] = { "Horizontal (Label: Value)", "Vertical (Label / Value)" };
-                        const char* lbl_ids[]     = { "horizontal", "vertical" };
-                        static int lbl_idx = 0;
-                        if (!buffers_loaded)
-                            for (int l = 0; l < 2; l++)
-                                if (g_imgui_ctx->label_layout == lbl_ids[l]) { lbl_idx = l; break; }
-                        ImGui::SetNextItemWidth(240);
-                        if (ImGui::Combo("Label Layout", &lbl_idx, lbl_layouts, 2)) {
-                            g_imgui_ctx->label_layout = lbl_ids[lbl_idx];
-                            g_imgui_ctx->section_dirty = true;
-                        }
-
-                        // Content align
-                        const char* cont_aligns[] = { "Left", "Center", "Right" };
-                        const char* cont_ids[]    = { "left", "center", "right" };
-                        static int cont_idx = 0;
-                        if (!buffers_loaded)
-                            for (int c = 0; c < 3; c++)
-                                if (g_imgui_ctx->content_align == cont_ids[c]) { cont_idx = c; break; }
-                        ImGui::SetNextItemWidth(240);
-                        if (ImGui::Combo("Content Align", &cont_idx, cont_aligns, 3)) {
-                            g_imgui_ctx->content_align = cont_ids[cont_idx];
-                            g_imgui_ctx->section_dirty = true;
-                        }
-
-                        // Title align
-                        const char* title_aligns[] = { "Center", "Left", "Right" };
-                        const char* title_ids[]    = { "center", "left", "right" };
-                        static int title_idx = 0;
-                        if (!buffers_loaded)
-                            for (int c = 0; c < 3; c++)
-                                if (g_imgui_ctx->title_alignment == title_ids[c]) { title_idx = c; break; }
-                        ImGui::SetNextItemWidth(240);
-                        if (ImGui::Combo("Title Align", &title_idx, title_aligns, 3)) {
-                            g_imgui_ctx->title_alignment = title_ids[title_idx];
-                            g_imgui_ctx->section_dirty = true;
-                        }
-
-                        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-                        ImGui::TextDisabled("Section Names");
-                        static char sn_buf[5][64] = {};
-                        if (!buffers_loaded)
-                            for (int s = 0; s < 5; s++)
-                                strncpy_s(sn_buf[s], sizeof(sn_buf[s]), g_imgui_ctx->sec_names[s].c_str(), _TRUNCATE);
-                        for (int s = 0; s < 5; s++) {
-                            ImGui::PushID(s);
-                            char lbl[32]; snprintf(lbl, sizeof(lbl), "Section %d", s+1);
-                            ImGui::SetNextItemWidth(220);
-                            if (ImGui::InputText(lbl, sn_buf[s], sizeof(sn_buf[s]))) {
-                                g_imgui_ctx->sec_names[s] = sn_buf[s];
-                                g_imgui_ctx->section_dirty = true;
-                            }
-                            ImGui::PopID();
-                        }
-
-                        ImGui::EndTabItem();
-                    }
-
-                    // TAB 2: STATS VISIBILITY
-                    if (ImGui::BeginTabItem("Stats Visibility")) {
-                        ImGui::Spacing();
-                        ImGui::TextDisabled("Toggle stats and assign them to a section.");
-                        ImGui::Spacing();
-
-                        const char* sec_labels[] = { "S1","S2","S3","S4","S5" };
-
-                        struct StatEntry { const char* id; const char* label; };
-                        static const StatEntry stats[] = {
-                            {"dpi","DPI"}, {"sens","Sensitivity"}, {"fov","FOV"},
-                            {"ktheme","Kovaaks Theme"},
-                            {"hits","Hit Sounds"}, {"head","Head Sound"},
-                            {"kill","Kill Sound"}, {"shot","Shot Sound"},
-                            {"spawn","Spawn Sound"}, {"cd","Sound Cooldown"},
-                            {"cross","Crosshair Name"}, {"cross_rgb","Crosshair RGB"},
-                            {"cross_hex","Crosshair HEX"}, {"cross_size","Crosshair Size"},
-                            {"enemy_col","Enemy Body Color"}, {"enemy_head_col","Enemy Head Color"},
-                            {"enemy_bright","Enemy Brightness"}, {"enemy_metal","Enemy Metallic"},
-                            {"enemy_rough","Enemy Roughness"},
-                            {"sky_preset","Sky Preset"}, {"sky_col","Sky Color"},
-                            {"sky_clouds","Cloud Cover"}, {"sky_solid","Solid Color Sky"},
-                            {"sky_sun","Show Sun"},
-                            {"wall_col","Wall Color"}, {"wall_mat","Wall Texture"},
-                            {"wall_bright","Wall FullBright"}, {"wall_metal","Wall Metallic"},
-                            {"wall_rough","Wall Roughness"},
-                            {"floor_col","Floor Color"}, {"floor_mat","Floor Texture"},
-                            {"floor_bright","Floor FullBright"}, {"floor_metal","Floor Metallic"},
-                            {"floor_rough","Floor Roughness"},
-                            {"ceil_col","Ceiling Color"}, {"ceil_mat","Ceiling Texture"},
-                            {"ceil_bright","Ceil FullBright"}, {"ceil_metal","Ceil Metallic"},
-                            {"ceil_rough","Ceil Roughness"},
-                            {"ramp_col","Ramp Color"}, {"ramp_mat","Ramp Texture"},
-                            {"ramp_bright","Ramp FullBright"}, {"ramp_metal","Ramp Metallic"},
-                            {"ramp_rough","Ramp Roughness"},
-                        };
-                        constexpr int STAT_COUNT = sizeof(stats) / sizeof(stats[0]);
-
-                        ImGui::BeginChild("stats_scroll", ImVec2(0, 380), true);
-                        for (int i = 0; i < STAT_COUNT; i++) {
-                            ImGui::PushID(i);
-                            std::string id = stats[i].id;
-                            bool vis = g_imgui_ctx->visible.count(id) ? g_imgui_ctx->visible[id] : false;
-                            if (ImGui::Checkbox(stats[i].label, &vis)) {
-                                g_imgui_ctx->visible[id] = vis;
-                                g_imgui_ctx->section_dirty = true;
-                            }
-                            if (vis) {
-                                ImGui::SameLine(200);
-                                int sec = g_imgui_ctx->sec_assignment.count(id) ? g_imgui_ctx->sec_assignment[id] - 1 : 0;
-                                ImGui::SetNextItemWidth(80);
-                                if (ImGui::Combo("##sec", &sec, sec_labels, 5)) {
-                                    g_imgui_ctx->sec_assignment[id] = sec + 1;
-                                    g_imgui_ctx->section_dirty = true;
-                                }
-                                ImGui::SameLine();
-                                const char* pos_labels[] = { "inline", "newline" };
-                                std::string cur_pos = g_imgui_ctx->pos.count(id) ? g_imgui_ctx->pos[id] : "inline";
-                                int pos_idx = (cur_pos == "newline") ? 1 : 0;
-                                ImGui::SetNextItemWidth(90);
-                                if (ImGui::Combo("##pos", &pos_idx, pos_labels, 2)) {
-                                    g_imgui_ctx->pos[id] = pos_labels[pos_idx];
-                                    g_imgui_ctx->section_dirty = true;
-                                }
-                            }
-                            ImGui::PopID();
-                        }
-                        ImGui::EndChild();
-                        ImGui::EndTabItem();
-                    }
-
-                    // TAB 3: CUSTOM INFO
-                    if (ImGui::BeginTabItem("Custom Info")) {
-                        ImGui::Spacing();
-                        ImGui::TextDisabled("Manual entries (e.g. OW sensitivity, monitor, mouse...)");
-                        ImGui::Spacing();
-
-                        const char* sec_labels[] = { "Section 1","Section 2","Section 3","Section 4","Section 5" };
-                        const char* pos_labels[] = { "Continue line (inline)", "New line (newline)" };
-
-                        for (int i = 0; i < kovaaks_context::CUSTOM_INFO_COUNT; i++) {
-                            ImGui::PushID(i);
-                            char header[32];
-                            snprintf(header, sizeof(header), "Custom Info %d", i + 1);
-                            if (ImGui::CollapsingHeader(header, ImGuiTreeNodeFlags_DefaultOpen)) {
-                                ImGui::Indent(10.0f);
-                                ImGui::Checkbox("Enabled", &vis_buf[i]);
-                                ImGui::SetNextItemWidth(190);
-                                ImGui::InputText("Label", lbl_buf[i], sizeof(lbl_buf[i]));
-                                ImGui::SameLine();
-                                ImGui::SetNextItemWidth(190);
-                                ImGui::InputText("Value", val_buf[i], sizeof(val_buf[i]));
-                                ImGui::SetNextItemWidth(130);
-                                ImGui::Combo("Section", &sec_buf[i], sec_labels, 5);
-                                ImGui::SameLine();
-                                ImGui::SetNextItemWidth(200);
-                                ImGui::Combo("Layout", &pos_buf[i], pos_labels, 2);
-                                ImGui::Unindent(10.0f);
-                            }
-                            ImGui::PopID();
-                            ImGui::Spacing();
-                        }
-
-                        ImGui::Separator();
-                        ImGui::Spacing();
-                        float btn_w = 130.0f;
-                        ImGui::SetCursorPosX((win_size.x - btn_w) * 0.5f);
-                        if (ImGui::Button("Apply Custom Info", ImVec2(btn_w, 28))) {
-                            for (int i = 0; i < kovaaks_context::CUSTOM_INFO_COUNT; i++) {
-                                g_imgui_ctx->custom_info[i].label          = lbl_buf[i];
-                                g_imgui_ctx->custom_info[i].value          = val_buf[i];
-                                g_imgui_ctx->custom_info[i].sec_assignment = sec_buf[i] + 1;
-                                g_imgui_ctx->custom_info[i].visible        = vis_buf[i];
-                                g_imgui_ctx->custom_info[i].pos            = (pos_buf[i] == 1) ? "newline" : "inline";
-                            }
-                            g_imgui_ctx->section_dirty = true;
-                        }
-                        ImGui::EndTabItem();
-                    }
-
-                    ImGui::EndTabBar();
-                }
-
-                // Global close button
-                ImGui::Spacing();
-                float close_w = 80.0f;
-                ImGui::SetCursorPosX((win_size.x - close_w) * 0.5f);
-                if (ImGui::Button("Close", ImVec2(close_w, 26))) {
-                    // Save custom info before closing
-                    for (int i = 0; i < kovaaks_context::CUSTOM_INFO_COUNT; i++) {
-                        g_imgui_ctx->custom_info[i].label          = lbl_buf[i];
-                        g_imgui_ctx->custom_info[i].value          = val_buf[i];
-                        g_imgui_ctx->custom_info[i].sec_assignment = sec_buf[i] + 1;
-                        g_imgui_ctx->custom_info[i].visible        = vis_buf[i];
-                        g_imgui_ctx->custom_info[i].pos            = (pos_buf[i] == 1) ? "newline" : "inline";
-                    }
-                    g_imgui_ctx->section_dirty = true;
-                    show_menu = false;
-                }
-            }
-
-
-                ImGui::End(); // end Kovaaks Plugin Settings
-            } // end if (show_menu)
-
-            // KILL STATS VIEWER (mirrors the HTML widget)
-            if (show_graph && g_imgui_ctx) {
-                bool showAcc = g_imgui_ctx->ks_show_accuracy;
-                bool showTTK = g_imgui_ctx->ks_show_ttk;
-                bool showSH  = g_imgui_ctx->ks_show_shots_hits;
-                bool showEff = g_imgui_ctx->ks_show_efficiency;
-                bool showAvg = g_imgui_ctx->ks_show_avgs;
-
-                // Thread-safe snapshot of the data
-                std::vector<GraphBotSeries>   snap_data;
-                std::map<std::string, BotAvg> snap_avgs;
-                bool is_loading = g_graph_loading.load();
-                if (!is_loading) {
-                    std::lock_guard<std::mutex> lock(g_graph_mutex);
-                    snap_data = g_graph_data;
-                    snap_avgs = g_graph_avgs;
-                }
-
-                // Fixed column widths
-                const float cBot = 160.0f;
-                const float cAcc = 150.0f;
-                const float cTTK = 140.0f;
-                const float cSH  = 150.0f;
-                const float cEff = 140.0f;
-                const float bar_h = 4.0f;
-
-                int  bot_count = (int)snap_data.size();
-                float win_w    = cBot
-                    + (showAcc ? cAcc : 0.0f)
-                    + (showTTK ? cTTK : 0.0f)
-                    + (showSH  ? cSH  : 0.0f)
-                    + (showEff ? cEff : 0.0f)
-                    + 24.0f;
-                if (win_w < 300.0f) win_w = 300.0f;
-
-                ImGui::SetNextWindowSizeConstraints(
-                    ImVec2(win_w, 60.0f),
-                    ImVec2(win_w, screenH * 0.90f));
-                ImGui::SetNextWindowPos(
-                    ImVec2(screenW * 0.5f, screenH * 0.5f),
-                    ImGuiCond_Always,
-                    ImVec2(0.5f, 0.5f));
-
-                bool g_open = true;
-                ImGui::Begin("Kill Stats", &g_open,
-                    ImGuiWindowFlags_NoCollapse |
-                    ImGuiWindowFlags_NoMove     |
-                    ImGuiWindowFlags_NoScrollbar |
-                    ImGuiWindowFlags_AlwaysAutoResize);
-
-                if (is_loading) {
-                    ImGui::TextDisabled("Loading stats...");
-                } else if (snap_data.empty()) {
-                    ImGui::TextDisabled("No multi-bot run found.");
-                    ImGui::TextDisabled("Run a tracking gauntlet scenario first.");
-                } else {
-                    auto deltaColor = [](float delta, bool higherBetter) -> ImVec4 {
-                        bool better = higherBetter ? delta > 0.005f : delta < -0.005f;
-                        return better ? ImVec4(0.3f,1.0f,0.44f,1.0f) : ImVec4(1.0f,0.36f,0.36f,1.0f);
-                    };
-                    auto accColor = [](float acc) -> ImVec4 {
-                        float r = (acc < 50.0f) ? 1.0f : (1.0f - (acc - 50.0f) / 50.0f);
-                        float g = (acc > 50.0f) ? 1.0f : (acc / 50.0f);
-                        return ImVec4(r, g, 0.2f, 1.0f);
-                    };
-                    auto toU32 = [](ImVec4 c) -> ImU32 {
-                        return IM_COL32((int)(c.x*255),(int)(c.y*255),(int)(c.z*255),(int)(c.w*255));
-                    };
-
-                    int ncols = 1 + (showAcc?1:0) + (showTTK?1:0) + (showSH?1:0) + (showEff?1:0);
-
-                    ImGuiTableFlags tflags = ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingFixedFit;
-                    if (ImGui::BeginTable("ks_table", ncols, tflags)) {
-                        ImGui::TableSetupColumn("Bot",        ImGuiTableColumnFlags_WidthFixed, cBot);
-                        if (showAcc) ImGui::TableSetupColumn("Acc %",      ImGuiTableColumnFlags_WidthFixed, cAcc);
-                        if (showTTK) ImGui::TableSetupColumn("TTK",        ImGuiTableColumnFlags_WidthFixed, cTTK);
-                        if (showSH)  ImGui::TableSetupColumn("Hits/Shots", ImGuiTableColumnFlags_WidthFixed, cSH);
-                        if (showEff) ImGui::TableSetupColumn("Eff %",      ImGuiTableColumnFlags_WidthFixed, cEff);
-                        ImGui::TableHeadersRow();
-
-                        ImDrawList* dl = ImGui::GetWindowDrawList();
-
-                        for (auto& s : snap_data) {
-                            float acc   = s.accuracy.empty()   ? 0.0f : s.accuracy.back().value;
-                            float ttk   = s.ttk.empty()        ? 0.0f : s.ttk.back().value;
-                            float eff   = s.efficiency.empty() ? 0.0f : s.efficiency.back().value;
-                            int   shots = s.shots.empty() ? 0 : (int)s.shots.back().value;
-                            int   hits  = s.hits.empty()  ? 0 : (int)s.hits.back().value;
-
-                            float avg_acc=0, avg_ttk=0, avg_eff=0, avg_hits=0, avg_shots=0;
-                            bool hasAvg = false;
-                            int gd_idx = (int)(&s - snap_data.data());
-                            std::string bot_key = "bot_" + std::to_string(gd_idx);
-                            auto it = snap_avgs.find(bot_key);
-                            if (it != snap_avgs.end() && it->second.count > 0) {
-                                hasAvg    = true;
-                                avg_acc   = it->second.accuracy;
-                                avg_ttk   = it->second.ttk;
-                                avg_eff   = it->second.efficiency;
-                                avg_hits  = (float)it->second.hits;
-                                avg_shots = (float)it->second.shots;
-                            }
-
-                            ImGui::TableNextRow();
-                            ImGui::TableSetColumnIndex(0);
-                            // Vertical padding to center against row height
-                            ImGui::Dummy(ImVec2(0, 2));
-                            ImGui::TextUnformatted(s.bot_name.c_str());
-
-                            int col = 1;
-
-                            // Accuracy
-                            if (showAcc) {
-                                ImGui::TableSetColumnIndex(col++);
-                                ImGui::Dummy(ImVec2(0, 2));
-                                ImVec4 ac = accColor(acc);
-                                ImGui::TextColored(ac, "%.1f%%", acc);
-                                // Accuracy bar
-                                ImVec2 bar_pos = ImGui::GetCursorScreenPos();
-                                float bar_w = cAcc - 16.0f;
-                                dl->AddRectFilled(bar_pos, ImVec2(bar_pos.x + bar_w, bar_pos.y + bar_h),
-                                    IM_COL32(60,60,60,180), 2.0f);
-                                dl->AddRectFilled(bar_pos, ImVec2(bar_pos.x + bar_w * (acc / 100.0f), bar_pos.y + bar_h),
-                                    toU32(ac), 2.0f);
-                                ImGui::Dummy(ImVec2(bar_w, bar_h + 2.0f));
-                                if (showAvg && hasAvg) {
-                                    float d = acc - avg_acc;
-                                    char buf[48]; snprintf(buf, sizeof(buf), "%+.1f / avg %.1f", d, avg_acc);
-                                    ImGui::TextColored(deltaColor(d, true), "%s", buf);
-                                }
-                            }
-
-                            // TTK
-                            if (showTTK) {
-                                ImGui::TableSetColumnIndex(col++);
-                                ImGui::Dummy(ImVec2(0, 2));
-                                ImGui::Text("%.2fs", ttk);
-                                ImGui::Dummy(ImVec2(0, bar_h + 2.0f)); // align with acc bar
-                                if (showAvg && hasAvg) {
-                                    float d = ttk - avg_ttk;
-                                    char buf[48]; snprintf(buf, sizeof(buf), "%+.2f / avg %.2f", d, avg_ttk);
-                                    ImGui::TextColored(deltaColor(d, false), "%s", buf);
-                                }
-                            }
-
-                            // Hits/Shots
-                            if (showSH) {
-                                ImGui::TableSetColumnIndex(col++);
-                                ImGui::Dummy(ImVec2(0, 2));
-                                ImGui::Text("%d/%d", hits, shots);
-                                ImGui::Dummy(ImVec2(0, bar_h + 2.0f));
-                                if (showAvg && hasAvg) {
-                                    int dh = hits - (int)avg_hits;
-                                    char buf[48]; snprintf(buf, sizeof(buf), "%+d / avg %d/%d", dh, (int)avg_hits, (int)avg_shots);
-                                    ImGui::TextColored(deltaColor((float)dh, true), "%s", buf);
-                                }
-                            }
-
-                            // Efficiency
-                            if (showEff) {
-                                ImGui::TableSetColumnIndex(col++);
-                                ImGui::Dummy(ImVec2(0, 2));
-                                ImGui::Text("%.1f%%", eff);
-                                ImGui::Dummy(ImVec2(0, bar_h + 2.0f));
-                                if (showAvg && hasAvg) {
-                                    float d = eff - avg_eff;
-                                    char buf[48]; snprintf(buf, sizeof(buf), "%+.1f / avg %.1f", d, avg_eff);
-                                    ImGui::TextColored(deltaColor(d, true), "%s", buf);
-                                }
-                            }
-                        }
-                        ImGui::EndTable();
-                    }
-                }
-
-                if (!g_open) show_graph = false;
-                ImGui::End();
-            }
-
-            // EVOLUTION GRAPH — per-bot curves over 10 runs
-            if (show_evolution && g_imgui_ctx) {
-                bool showAcc = g_imgui_ctx->ks_show_accuracy;
-                bool showTTK = g_imgui_ctx->ks_show_ttk;
-                bool showEff = g_imgui_ctx->ks_show_efficiency;
-
-                std::vector<GraphBotSeries> snap_data;
-                {
-                    std::lock_guard<std::mutex> lock(g_graph_mutex);
-                    snap_data = g_graph_data;
-                }
-
-                // Per-bot colors (up to 8)
-                static const ImVec4 BOT_COLORS[] = {
-                    {0.2f, 0.7f, 1.0f, 1.0f},  // blue
-                    {0.2f, 1.0f, 0.4f, 1.0f},  // green
-                    {1.0f, 0.6f, 0.1f, 1.0f},  // orange
-                    {1.0f, 0.3f, 0.5f, 1.0f},  // pink
-                    {0.8f, 0.3f, 1.0f, 1.0f},  // purple
-                    {1.0f, 1.0f, 0.2f, 1.0f},  // yellow
-                    {0.3f, 1.0f, 0.9f, 1.0f},  // cyan
-                    {1.0f, 0.5f, 0.5f, 1.0f},  // light red
-                };
-
-                int nStats = (showAcc?1:0) + (showTTK?1:0) + (showEff?1:0);
-                if (nStats == 0) nStats = 1;
-                int nBots = (int)snap_data.size();
-
-                const float GRAPH_W   = 700.0f;
-                const float GRAPH_H   = 220.0f;
-                const float PAD       = 12.0f;
-                float win_w = PAD*2 + GRAPH_W;
-                float win_h = PAD*2 + nStats * (GRAPH_H + 36.0f) + 20.0f;
-
-                ImGui::SetNextWindowSize(ImVec2(win_w, win_h), ImGuiCond_Always);
-                ImGui::SetNextWindowPos(
-                    ImVec2(screenW * 0.5f, screenH * 0.5f),
-                    ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-
-                bool ev_open = true;
-                ImGui::Begin("Stats Evolution", &ev_open,
-                    ImGuiWindowFlags_NoCollapse |
-                    ImGuiWindowFlags_NoMove     |
-                    ImGuiWindowFlags_NoResize   |
-                    ImGuiWindowFlags_NoScrollbar);
-
-                if (snap_data.empty()) {
-                    ImGui::TextDisabled("No data — run a tracking gauntlet first.");
-                } else {
-
-                    auto DrawStatGraph = [&](const char* label,
-                        std::function<const std::vector<GraphRunPoint>*(const GraphBotSeries&)> getter,
-                        bool lowerBetter)
-                    {
-                        const float NAME_W = 200.0f;
-                        const float PLOT_W = GRAPH_W - NAME_W;
-                        const float PLOT_H = GRAPH_H;
-                        int nBots = (int)snap_data.size();
-
-                        int maxPts = 0;
-                        for (auto& s : snap_data) { auto* p = getter(s); if (p) maxPts = std::max(maxPts, (int)p->size()); }
-
-                        // Y scale
-                        float gmin, gmax;
-                        if (!lowerBetter) {
-                            // Accuracy/Efficiency: zoom around actual values with margin
-                            gmin = FLT_MAX; gmax = -FLT_MAX;
-                            for (auto& s : snap_data) {
-                                auto* p = getter(s);
-                                if (!p) continue;
-                                for (auto& pt : *p) { gmin = std::min(gmin, pt.value); gmax = std::max(gmax, pt.value); }
-                            }
-                            float margin = std::max((gmax - gmin) * 0.4f, 3.0f);
-                            gmin = std::max(0.0f, gmin - margin);
-                            gmax = std::min(100.0f, gmax + margin);
-                        } else {
-                            gmin = FLT_MAX; gmax = -FLT_MAX;
-                            for (auto& s : snap_data) {
-                                auto* p = getter(s);
-                                if (!p) continue;
-                                for (auto& pt : *p) { gmin = std::min(gmin, pt.value); gmax = std::max(gmax, pt.value); }
-                            }
-                            float pad = std::max((gmax - gmin) * 0.3f, 0.05f);
-                            gmin -= pad; gmax += pad;
-                        }
-                        float grange = (gmax - gmin > 0) ? gmax - gmin : 1.0f;
-
-                        ImGui::Text("%s", label);
-                        ImVec2 origin = ImGui::GetCursorScreenPos();
-                        // Names column on the left, graph on the right
-                        float totalH = PLOT_H + 18.0f; // +18 for X labels
-                        ImGui::Dummy(ImVec2(GRAPH_W, totalH));
-                        ImDrawList* dl2 = ImGui::GetWindowDrawList();
-
-                        ImVec2 plotOrigin = ImVec2(origin.x + NAME_W, origin.y);
-
-                        // Graph background
-                        dl2->AddRectFilled(plotOrigin,
-                            ImVec2(plotOrigin.x + PLOT_W, plotOrigin.y + PLOT_H),
-                            IM_COL32(25, 25, 35, 230), 4.0f);
-
-                        // Horizontal grid + Y labels
-                        for (int gi = 0; gi <= 4; gi++) {
-                            float gy = plotOrigin.y + PLOT_H * gi / 4.0f;
-                            dl2->AddLine(ImVec2(plotOrigin.x, gy),
-                                         ImVec2(plotOrigin.x + PLOT_W, gy),
-                                         IM_COL32(70, 70, 90, 100));
-                        }
-
-                        // Vertical grid + X labels — based on the longest series
-                        // each bot has its own X values, so we just label 1..maxPts
-                        if (maxPts > 1) {
-                            for (int i = 0; i < maxPts; i++) {
-                                float x = plotOrigin.x + PLOT_W * i / (float)(maxPts-1);
-                                dl2->AddLine(ImVec2(x, plotOrigin.y),
-                                             ImVec2(x, plotOrigin.y + PLOT_H),
-                                             IM_COL32(60, 60, 80, 80));
-                                char rb[8]; snprintf(rb, sizeof(rb), "%d", i+1);
-                                dl2->AddText(ImVec2(x - 3, plotOrigin.y + PLOT_H + 2),
-                                             IM_COL32(130,130,150,180), rb);
-                            }
-                        }
-
-                        auto valueToY = [&](float v) {
-                            float norm = (v - gmin) / grange;
-                            norm = std::max(0.0f, std::min(1.0f, norm));
-                            return plotOrigin.y + PLOT_H * (1.0f - norm);
-                        };
-
-                        // Names column on the left
-                        dl2->AddRectFilled(origin,
-                            ImVec2(origin.x + NAME_W - 4, origin.y + PLOT_H),
-                            IM_COL32(20, 20, 30, 200));
-
-                        // Curves + names (label anti-collision)
-                        // First compute label Y positions
-                        std::vector<float> labelYs(nBots, 0.0f);
-                        for (int bi = 0; bi < nBots; bi++) {
-                            auto* pts = getter(snap_data[bi]);
-                            if (!pts || pts->empty()) { labelYs[bi] = origin.y + bi * 14.0f; continue; }
-                            labelYs[bi] = std::max(origin.y + 2, std::min(origin.y + PLOT_H - 14, valueToY(pts->back().value) - 6));
-                        }
-                        // Push-apart: iterate to avoid overlaps
-                        const float LABEL_H = 16.0f;
-                        for (int iter = 0; iter < 20; iter++) {
-                            for (int bi = 1; bi < nBots; bi++) {
-                                float overlap = (labelYs[bi-1] + LABEL_H) - labelYs[bi];
-                                if (overlap > 0) {
-                                    labelYs[bi-1] -= overlap * 0.5f;
-                                    labelYs[bi]   += overlap * 0.5f;
-                                }
-                            }
-                            // Clamp within the zone
-                            for (int bi = 0; bi < nBots; bi++)
-                                labelYs[bi] = std::max(origin.y + 2, std::min(origin.y + PLOT_H - 14, labelYs[bi]));
-                        }
-
-                        // Clip labels within the names column
-                        dl2->PushClipRect(origin, ImVec2(origin.x + NAME_W - 2, origin.y + PLOT_H), false);
-                        for (int bi = 0; bi < nBots; bi++) {
-                            auto* pts = getter(snap_data[bi]);
-                            ImU32 col = ImGui::ColorConvertFloat4ToU32(BOT_COLORS[bi % 8]);
-                            if (!pts || pts->empty()) continue;
-
-                            // Value on the right (fixed)
-                            char valBuf[12]; snprintf(valBuf, sizeof(valBuf), "%.1f", pts->back().value);
-                            float valW = ImGui::CalcTextSize(valBuf).x;
-                            dl2->AddText(ImVec2(origin.x + NAME_W - valW - 4, labelYs[bi]), col, valBuf);
-
-                            // Name truncated to fit the remaining space
-                            std::string name = snap_data[bi].bot_name;
-                            float maxNameW = NAME_W - valW - 10;
-                            while (name.size() > 2 && ImGui::CalcTextSize(name.c_str()).x > maxNameW)
-                                name.pop_back();
-                            dl2->AddText(ImVec2(origin.x + 2, labelYs[bi]), col, name.c_str());
-                        }
-                        dl2->PopClipRect();
-
-                        // Curves within the plot area
-                        dl2->PushClipRect(plotOrigin, ImVec2(plotOrigin.x + PLOT_W, plotOrigin.y + PLOT_H), true);
-                        for (int bi = 0; bi < nBots; bi++) {
-                            auto* pts = getter(snap_data[bi]);
-                            ImU32 col = ImGui::ColorConvertFloat4ToU32(BOT_COLORS[bi % 8]);
-                            if (!pts || pts->empty()) continue;
-                            int n = (int)pts->size();
-
-                            auto xPosN = [&](int i) {
-                                return plotOrigin.x + PLOT_W * i / (float)std::max(n-1, 1);
-                            };
-
-                            if (n == 1) {
-                                float y = valueToY((*pts)[0].value);
-                                dl2->AddLine(ImVec2(plotOrigin.x, y),
-                                             ImVec2(plotOrigin.x + PLOT_W, y), col, 1.5f);
-                                dl2->AddCircleFilled(ImVec2(plotOrigin.x + PLOT_W * 0.5f, y), 3.5f, col);
-                            } else {
-                                for (int i = 1; i < n; i++) {
-                                    float x0 = xPosN(i-1), x1 = xPosN(i);
-                                    float y0 = valueToY((*pts)[i-1].value);
-                                    float y1 = valueToY((*pts)[i].value);
-                                    dl2->AddLine(ImVec2(x0,y0), ImVec2(x1,y1), col, 2.0f);
-                                    dl2->AddCircleFilled(ImVec2(x1,y1), 3.0f, col);
-                                }
-                                dl2->AddCircleFilled(ImVec2(xPosN(0), valueToY((*pts)[0].value)), 3.0f, col);
-                            }
-                        }
-                        dl2->PopClipRect();
-                    };
-
-                    if (showAcc) DrawStatGraph("Accuracy (%)",
-                        [](const GraphBotSeries& s) { return &s.accuracy; }, false);
-                    if (showTTK) DrawStatGraph("TTK (s)",
-                        [](const GraphBotSeries& s) { return &s.ttk; }, true);
-                    if (showEff) DrawStatGraph("Efficiency (%)",
-                        [](const GraphBotSeries& s) { return &s.efficiency; }, false);
-                    if (!showAcc && !showTTK && !showEff)
-                        ImGui::TextDisabled("No stats enabled — check plugin settings.");
-                }
-
-                if (!ev_open) show_evolution = false;
-                ImGui::End();
-            }
-
-            ImGui::Render();
-
-            const float clear_color[4] = { 0.f, 0.f, 0.f, 0.f };
-            g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
-            g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color);
-            ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-            g_pSwapChain->Present(0, 0);
-        }
-
-        // Frame limiter ~30 FPS
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - frame_start).count();
-        if (elapsed < 33) std::this_thread::sleep_for(std::chrono::milliseconds(33 - elapsed));
-    }
-
-    ImGui_ImplDX11_Shutdown();
-    ImGui_ImplWin32_Shutdown();
-    ImGui::DestroyContext();
-    CleanupDeviceD3D();
-
-    // Unregister raw input
-    {
-        RAWINPUTDEVICE rid;
-        rid.usUsagePage = 0x01;
-        rid.usUsage     = 0x06;
-        rid.dwFlags     = RIDEV_REMOVE;
-        rid.hwndTarget  = nullptr;
-        RegisterRawInputDevices(&rid, 1, sizeof(rid));
-    }
-
-    ::DestroyWindow(hwnd);
-    ::UnregisterClassA(wc.lpszClassName, wc.hInstance);
-    } catch (const std::exception& e) {
-        blog(LOG_ERROR, "[KovaaksPlugin] ImGuiMenuThread exception: %s", e.what());
-    } catch (...) {
-        blog(LOG_ERROR, "[KovaaksPlugin] ImGuiMenuThread: unknown exception");
-    }
-}
-
 void kovaaks_update(void* data, obs_data_t* settings);
+void ExportToJson(kovaaks_context* ctx, bool force_reload);
+
+// Guards g_watcher_ctx (set by the watcher threads further below) and the runtime
+// fields they share with the OBS UI thread (last_bots, last_csv_processed,
+// showing_ks_preview, killstats_timer, cache_valid).
+static kovaaks_context* g_watcher_ctx = nullptr;
+static std::mutex       g_watcher_ctx_mutex;
 
 static void hotkey_next_section(void* data, obs_hotkey_id id, obs_hotkey_t* hotkey, bool pressed) {
     if (!pressed) return;
@@ -1314,28 +161,13 @@ static void hotkey_prev_section(void* data, obs_hotkey_id id, obs_hotkey_t* hotk
     ctx->section_dirty = true;
 }
 
-static void hotkey_open_imgui(void* data, obs_hotkey_id id, obs_hotkey_t* hotkey, bool pressed) {
-    if (!pressed) return;
-    g_imgui_toggle = true;
-}
-
-static void hotkey_open_graph(void* data, obs_hotkey_id id, obs_hotkey_t* hotkey, bool pressed) {
-    if (!pressed) return;
-    g_graph_toggle = true;
-}
-
-static void hotkey_open_evolution(void* data, obs_hotkey_id id, obs_hotkey_t* hotkey, bool pressed) {
-    if (!pressed) return;
-    g_evolution_toggle = true;
-}
-
 static void ExportKillStats(const kovaaks_context* ctx, const std::vector<KillStatBot>& bots,
                              const std::map<std::string, BotAvg>* avgs = nullptr);
 
-// Shortcut to show the latest stats
 static void hotkey_show_killstats(void* data, obs_hotkey_id id, obs_hotkey_t* hotkey, bool pressed) {
     if (!pressed) return;
     auto* ctx = static_cast<kovaaks_context*>(data);
+    std::lock_guard<std::mutex> lock(g_watcher_ctx_mutex); // last_bots/last_csv_processed are also touched by the CSV watcher thread
     ctx->showing_ks_preview = false;
     if (!ctx->last_bots.empty()) {
         const std::string& csv_folder = ctx->kovaaks_stats_folder.empty()
@@ -1412,26 +244,183 @@ std::string get_rgb_color_hex(const json& j, const std::string& key) {
     return "None";
 }
 
-// KILL STATS — CSV PARSING & EXPORT
+// Kill stats CSV parsing and export
 
-static std::string FindLatestCsv(const std::string& folder) {
-    std::string latest_path;
-    std::filesystem::file_time_type latest_time;
-    try {
-        for (auto& entry : std::filesystem::directory_iterator(folder)) {
-            if (!entry.is_regular_file()) continue;
-            std::string fname = entry.path().filename().string();
-            if (fname.find(".csv") == std::string::npos) continue;
-            if (fname.find("Challenge") == std::string::npos) continue;
-            auto mtime = entry.last_write_time();
-            if (latest_path.empty() || mtime > latest_time) {
-                latest_time = mtime;
-                latest_path = entry.path().string();
-            }
-        }
-    } catch (...) {}
-    return latest_path;
+static std::vector<KillStatBot> ParseKillStatsCsv(const std::string& path);
+
+// CSV watcher
+// Returns true if any running process's name contains the given substring.
+static bool IsProcessRunning(const char* name_substr) {
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return false;
+
+    std::string needle = name_substr;
+    std::transform(needle.begin(), needle.end(), needle.begin(), ::tolower);
+
+    PROCESSENTRY32 pe = {};
+    pe.dwSize = sizeof(pe);
+    bool found = false;
+    if (Process32First(snap, &pe)) {
+        do {
+            std::string exe = pe.szExeFile;
+            std::transform(exe.begin(), exe.end(), exe.begin(), ::tolower);
+            if (exe.find(needle) != std::string::npos) { found = true; break; }
+        } while (Process32Next(snap, &pe));
+    }
+    CloseHandle(snap);
+    return found;
 }
+
+// KovaaK's runs on Unreal Engine, packaged as "FPSAimTrainer-Win64-Shipping.exe".
+// Matching on the substring covers that and any Steam/standalone naming variants.
+static bool IsKovaaksRunning() {
+    return IsProcessRunning("fpsaimtrainer");
+}
+
+// Event-driven folder watch via ReadDirectoryChangesW instead of re-scanning the whole
+// stats folder every second. The thread sleeps at ~0% CPU and Windows wakes it the
+// instant a matching file is written, instead of polling for it.
+struct FolderWatcher {
+    std::thread       thread;
+    std::atomic<bool> running{false};
+    HANDLE            stop_event = nullptr;
+    std::string       path; // folder currently being watched, to detect path changes
+};
+
+// Blocks watching `folder` for file changes, calling on_change(filename) for each
+// add/modify/rename event, until `watcher.running` is cleared.
+static void RunFolderWatcher(const std::string& folder, FolderWatcher& watcher,
+                              const std::function<void(const std::string&)>& on_change) {
+    HANDLE hDir = CreateFileA(folder.c_str(), FILE_LIST_DIRECTORY,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, nullptr);
+    if (hDir == INVALID_HANDLE_VALUE) {
+        blog(LOG_WARNING, "[KovaaksPlugin] FolderWatcher: cannot open folder '%s'", folder.c_str());
+        return;
+    }
+    blog(LOG_INFO, "[KovaaksPlugin] FolderWatcher: watching '%s'", folder.c_str());
+
+    char buf[32768];
+    OVERLAPPED ov = {};
+    HANDLE hEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+    ov.hEvent = hEvent;
+    HANDLE waitHandles[2] = { hEvent, watcher.stop_event };
+
+    while (watcher.running.load()) {
+        ResetEvent(hEvent);
+        DWORD bytes = 0;
+        if (!ReadDirectoryChangesW(hDir, buf, sizeof(buf), FALSE,
+                FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE,
+                &bytes, &ov, nullptr)) {
+            Sleep(500);
+            continue;
+        }
+
+        DWORD wait = WaitForMultipleObjects(2, waitHandles, FALSE, INFINITE);
+        if (wait == WAIT_OBJECT_0 + 1 || !watcher.running.load()) break; // stop signaled
+        if (!GetOverlappedResult(hDir, &ov, &bytes, FALSE) || bytes == 0) continue;
+
+        auto* info = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(buf);
+        while (true) {
+            if (info->Action == FILE_ACTION_ADDED ||
+                info->Action == FILE_ACTION_MODIFIED ||
+                info->Action == FILE_ACTION_RENAMED_NEW_NAME) {
+
+                int len = WideCharToMultiByte(CP_UTF8, 0, info->FileName,
+                    info->FileNameLength / sizeof(WCHAR), nullptr, 0, nullptr, nullptr);
+                std::string fname(len, 0);
+                WideCharToMultiByte(CP_UTF8, 0, info->FileName,
+                    info->FileNameLength / sizeof(WCHAR), &fname[0], len, nullptr, nullptr);
+                on_change(fname);
+            }
+            if (info->NextEntryOffset == 0) break;
+            info = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(
+                reinterpret_cast<char*>(info) + info->NextEntryOffset);
+        }
+    }
+
+    CancelIo(hDir);
+    CloseHandle(hEvent);
+    CloseHandle(hDir);
+    blog(LOG_INFO, "[KovaaksPlugin] FolderWatcher: stopped ('%s').", folder.c_str());
+}
+
+static void StopWatcher(FolderWatcher& watcher) {
+    if (watcher.running.load()) {
+        watcher.running = false;
+        if (watcher.stop_event) SetEvent(watcher.stop_event);
+        if (watcher.thread.joinable()) watcher.thread.join();
+    }
+    watcher.path.clear();
+}
+
+static void StartWatcher(FolderWatcher& watcher, const std::string& folder,
+                          std::function<void(std::string)> thread_fn) {
+    if (folder.empty() || folder == watcher.path) return;
+    StopWatcher(watcher);
+    if (!watcher.stop_event) watcher.stop_event = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+    ResetEvent(watcher.stop_event);
+    watcher.path = folder;
+    watcher.running = true;
+    watcher.thread = std::thread(std::move(thread_fn), folder);
+}
+
+static FolderWatcher g_csv_watcher;
+static FolderWatcher g_settings_watcher;
+
+static void ProcessNewCsv(const std::string& csv_folder, const std::string& full_path) {
+    std::lock_guard<std::mutex> lock(g_watcher_ctx_mutex);
+    if (!g_watcher_ctx) return;
+    auto* ctx = g_watcher_ctx;
+
+    auto bots = ParseKillStatsCsv(full_path);
+    ctx->last_csv_processed = full_path;
+
+    // Always cache the latest run's stats for manual recall via hotkey/button
+    ctx->last_bots = bots;
+
+    // Auto-display only triggers when there are multiple targets (multi-bot runs)
+    if (IsGauntletRun(bots)) {
+        ctx->showing_ks_preview = false;
+        auto avgs = ComputeAvgs(csv_folder, full_path, 10);
+        ExportKillStats(ctx, bots, &avgs);
+        ctx->killstats_timer = (ctx->killstats_display_sec > 0) ? (float)ctx->killstats_display_sec : 10.0f;
+    }
+}
+
+static void StartCsvWatcher(const std::string& csv_folder) {
+    StartWatcher(g_csv_watcher, csv_folder, [csv_folder](std::string folder) {
+        RunFolderWatcher(folder, g_csv_watcher, [csv_folder](const std::string& fname) {
+            bool is_csv = fname.size() > 4 && fname.compare(fname.size() - 4, 4, ".csv") == 0;
+            if (is_csv && fname.find("Challenge") != std::string::npos) {
+                Sleep(500); // let KovaaK's finish writing the file before we read it
+                ProcessNewCsv(csv_folder, csv_folder + "\\" + fname);
+            }
+        });
+    });
+}
+static void StopCsvWatcher() { StopWatcher(g_csv_watcher); }
+
+// KovaaK's rewrites these two files whenever the player changes sensitivity, binds,
+// or other in-game settings, we react to that instead of re-reading them on a timer.
+static void StartSettingsWatcher(const std::string& save_folder) {
+    StartWatcher(g_settings_watcher, save_folder, [](std::string folder) {
+        RunFolderWatcher(folder, g_settings_watcher, [](const std::string& fname) {
+            std::string lower = fname;
+            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+            if (lower == "primaryusersettings.json" || lower == "weaponsettings.ini") {
+                Sleep(200); // let KovaaK's finish writing the file before we read it
+                std::lock_guard<std::mutex> lock(g_watcher_ctx_mutex);
+                if (g_watcher_ctx) {
+                    g_watcher_ctx->cache_valid = false;
+                    ExportToJson(g_watcher_ctx, true);
+                }
+            }
+        });
+    });
+}
+static void StopSettingsWatcher() { StopWatcher(g_settings_watcher); }
 
 // Returns up to maxRuns CSV paths sorted newest-first, excluding exclude_path
 static std::string ExtractScenarioName(const std::string& path) {
@@ -1471,7 +460,7 @@ static std::vector<std::string> FindRecentCsvs(const std::string& folder, const 
     return result;
 }
 
-// Scenario-filtered version — keeps only runs from the same scenario as exclude_path
+// Scenario-filtered version: keeps only runs from the same scenario as exclude_path
 static std::vector<std::string> FindRecentCsvsSameScenario(const std::string& folder,
     const std::string& reference_path, int maxRuns) {
     std::string ref_scenario = ExtractScenarioName(reference_path);
@@ -1485,7 +474,7 @@ static std::vector<std::string> FindRecentCsvsSameScenario(const std::string& fo
             if (fname.find(".csv") == std::string::npos) continue;
             if (fname.find("Challenge") == std::string::npos) continue;
             std::string p = entry.path().string();
-            if (p == reference_path) continue; // exclude the current run
+            if (p == reference_path) continue;
             if (!ref_scenario.empty() && ExtractScenarioName(p) != ref_scenario) continue;
             entries.push_back({p, entry.last_write_time()});
         }
@@ -1540,10 +529,9 @@ static std::vector<KillStatBot> ParseKillStatsCsv(const std::string& path) {
     return bots;
 }
 
-// Per-bot averages from history
 static std::map<std::string, BotAvg> ComputeAvgs(const std::string& folder, const std::string& exclude_path, int maxRuns) {
     std::map<std::string, BotAvg> avgs;
-    // Filter by scenario — only average runs from the same scenario
+    // Filter by scenario: only average runs from the same scenario
     auto paths = FindRecentCsvsSameScenario(folder, exclude_path, maxRuns);
     for (auto& p : paths) {
         auto bots = ParseKillStatsCsv(p);
@@ -1628,7 +616,7 @@ static void HideKillStats(const kovaaks_context* ctx) {
     } catch (...) {}
 }
 
-void ExportToJson(kovaaks_context* ctx, bool force_reload) {    // Only re-read files when cache is invalid (~1s tick) or forced (settings change)
+void ExportToJson(kovaaks_context* ctx, bool force_reload) {    // Only re-read files when cache is invalid or forced (settings watcher, settings change)
     if (!ctx->cache_valid || force_reload) {
         std::string json_path = ctx->kovaaks_save_folder + "/PrimaryUserSettings.json";
         std::string ini_path  = ctx->kovaaks_save_folder + "/WeaponSettings.ini";
@@ -2025,11 +1013,13 @@ static bool on_shiku_clicked(obs_properties_t* props, obs_property_t* p, void* d
 void kovaaks_update(void* data, obs_data_t* settings) {
     obs_data_erase(settings, "_ctx_ptr");
     auto* ctx = static_cast<kovaaks_context*>(data);
-    
+    std::lock_guard<std::mutex> lock(g_watcher_ctx_mutex); // ctx fields below are also read by the watcher threads
+
     ctx->kovaaks_save_folder  = obs_data_get_string(settings, "kovaaks_save_folder");
     ctx->kovaaks_stats_folder = obs_data_get_string(settings, "kovaaks_stats_folder");
     ctx->export_folder        = obs_data_get_string(settings, "export_folder");
     ctx->cache_valid = false; // Invalidate cache when paths or settings change
+
     ctx->ui_theme = obs_data_get_string(settings, "ui_theme");
     ctx->custom_css = obs_data_get_string(settings, "custom_css");
     ctx->bg_opacity = (int)obs_data_get_int(settings, "bg_opacity");
@@ -2138,12 +1128,11 @@ obs_properties_t* kovaaks_get_properties(void* data) {
     obs_property_list_add_string(section_list, "Custom Section Names & Info", "sec_names");
     obs_property_set_modified_callback(section_list, on_section_changed);
 
-    // KILL STATS WIDGET — placed first for quick access
+    // Kill stats widget, placed first for quick access
     // Live callback: re-exports immediately if preview is active
     static auto on_ks_changed = [](obs_properties_t* props, obs_property_t*, obs_data_t* settings) -> bool {
         auto* ctx = static_cast<kovaaks_context*>(obs_properties_get_param(props));
         if (!ctx) return false;
-        // Update killstats settings from the properties
         ctx->killstats_theme       = obs_data_get_string(settings, "ks_theme");
         if (ctx->killstats_theme.empty()) ctx->killstats_theme = "dark";
         ctx->killstats_opacity     = (int)obs_data_get_int(settings, "ks_opacity");
@@ -2155,6 +1144,7 @@ obs_properties_t* kovaaks_get_properties(void* data) {
         ctx->ks_show_avgs          = obs_data_get_bool(settings, "ks_show_avgs");
         
         // If the widget is currently being shown
+        std::lock_guard<std::mutex> lock(g_watcher_ctx_mutex); // last_bots/killstats_timer also touched by the CSV watcher thread
         if (ctx->killstats_timer > 0.0f) {
             // If not showing the preview and real data exists, re-export the real data
             if (!ctx->showing_ks_preview && !ctx->last_bots.empty()) {
@@ -2218,7 +1208,7 @@ obs_properties_t* kovaaks_get_properties(void* data) {
     obs_property_set_modified_callback(ks_sh,  on_ks_changed);
     obs_property_set_modified_callback(ks_eff, on_ks_changed);
 
-    // Single avg toggle — compares against last 10 runs
+    // Single avg toggle: compares against last 10 runs
     obs_property_t* ks_avgs = obs_properties_add_bool(g_ks, "ks_show_avgs", "Show averages (last 10 runs)");
     obs_property_set_modified_callback(ks_avgs, on_ks_changed);
 
@@ -2226,6 +1216,7 @@ obs_properties_t* kovaaks_get_properties(void* data) {
         [](obs_properties_t* p, obs_property_t*, void*) -> bool {
             auto* ctx = static_cast<kovaaks_context*>(obs_properties_get_param(p));
             if (!ctx) return false;
+            std::lock_guard<std::mutex> lock(g_watcher_ctx_mutex);
             ctx->showing_ks_preview = true;
             std::vector<KillStatBot> fake;
             KillStatBot b1; b1.name="fast strafes blink";   b1.shots=1728; b1.hits=1000; b1.accuracy=57.87f; b1.ttk=17.27f; b1.efficiency=57.87f; fake.push_back(b1);
@@ -2249,6 +1240,7 @@ obs_properties_t* kovaaks_get_properties(void* data) {
         [](obs_properties_t* p, obs_property_t*, void*) -> bool {
             auto* ctx = static_cast<kovaaks_context*>(obs_properties_get_param(p));
             if (!ctx) return false;
+            std::lock_guard<std::mutex> lock(g_watcher_ctx_mutex);
             ctx->showing_ks_preview = false;
             HideKillStats(ctx);
             ctx->killstats_timer = -1.0f;
@@ -2258,7 +1250,9 @@ obs_properties_t* kovaaks_get_properties(void* data) {
     obs_properties_add_button(g_ks, "ks_show_last_btn", "Show Latest Run Stats",
         [](obs_properties_t* p, obs_property_t*, void*) -> bool {
             auto* ctx = static_cast<kovaaks_context*>(obs_properties_get_param(p));
-            if (!ctx || ctx->last_bots.empty()) return false;
+            if (!ctx) return false;
+            std::lock_guard<std::mutex> lock(g_watcher_ctx_mutex);
+            if (ctx->last_bots.empty()) return false;
             ctx->showing_ks_preview = false;
             const std::string& csv_folder = ctx->kovaaks_stats_folder.empty()
                 ? ctx->kovaaks_save_folder : ctx->kovaaks_stats_folder;
@@ -2524,16 +1518,22 @@ void kovaaks_video_tick(void* data, float seconds) {
     if (ctx->section_dirty) {
         ctx->section_dirty = false;
         ctx->rotation_timer = 0.0f;
-        if (!ctx->kovaaks_save_folder.empty() && !ctx->export_folder.empty()) ExportToJson(ctx, false);
+        if (!ctx->kovaaks_save_folder.empty() && !ctx->export_folder.empty()) {
+            std::lock_guard<std::mutex> lock(g_watcher_ctx_mutex); // ExportToJson reads fields also touched by the watcher threads
+            ExportToJson(ctx, false);
+        }
         return;
     }
 
     // KillStats display countdown
-    if (ctx->killstats_timer > 0.0f) {
-        ctx->killstats_timer -= seconds;
-        if (ctx->killstats_timer <= 0.0f) {
-            ctx->killstats_timer = -1.0f;
-            HideKillStats(ctx);
+    {
+        std::lock_guard<std::mutex> lock(g_watcher_ctx_mutex); // killstats_timer is also touched by the CSV watcher thread
+        if (ctx->killstats_timer > 0.0f) {
+            ctx->killstats_timer -= seconds;
+            if (ctx->killstats_timer <= 0.0f) {
+                ctx->killstats_timer = -1.0f;
+                HideKillStats(ctx);
+            }
         }
     }
 
@@ -2550,33 +1550,27 @@ void kovaaks_video_tick(void* data, float seconds) {
 
     if (ctx->time_elapsed < 1.0f) return;
     ctx->time_elapsed = 0.0f;
-    ctx->cache_valid = false;
+
+    // Only watch while the game is actually running. Avoids any background
+    // disk activity (folder watchers) while KovaaK's isn't even open.
+    bool game_running = IsKovaaksRunning();
+    if (game_running != ctx->kovaaks_running_last) {
+        ctx->kovaaks_running_last = game_running;
+        blog(LOG_INFO, "[KovaaksPlugin] KovaaK's %s",
+             game_running ? "detected, watching for runs." : "not running, pausing.");
+    }
+
+    if (!game_running) {
+        StopCsvWatcher();
+        StopSettingsWatcher();
+        return;
+    }
+
     if (!ctx->kovaaks_save_folder.empty() && !ctx->export_folder.empty()) {
-        ExportToJson(ctx, true);
-
-        // Check for new CSV
-        if (ctx->killstats_display_sec > 0) {
-            const std::string& csv_folder = ctx->kovaaks_stats_folder.empty()
-                ? ctx->kovaaks_save_folder
-                : ctx->kovaaks_stats_folder;
-            std::string latest = FindLatestCsv(csv_folder);
-            if (!latest.empty() && latest != ctx->last_csv_processed) {
-                ctx->last_csv_processed = latest;
-                auto bots = ParseKillStatsCsv(latest);
-                
-                // Always cache the latest run's stats for manual recall via hotkey/button
-                ctx->last_bots = bots;
-
-                // Auto-display only triggers when there are multiple targets (multi-bot runs)
-                if (IsGauntletRun(bots)) {
-                    ctx->showing_ks_preview = false;
-                    auto avgs = ComputeAvgs(csv_folder, latest, 10);
-                    ExportKillStats(ctx, bots, &avgs);
-                    ctx->killstats_timer = (float)ctx->killstats_display_sec;
-                    g_graph_new_csv = true; // notify the ImGui viewer to reload
-                }
-            }
-        }
+        const std::string& csv_folder = ctx->kovaaks_stats_folder.empty()
+            ? ctx->kovaaks_save_folder : ctx->kovaaks_stats_folder;
+        StartCsvWatcher(csv_folder);                    // no-op if already watching this folder
+        StartSettingsWatcher(ctx->kovaaks_save_folder); // no-op if already watching this folder
     }
 }
 
@@ -2584,9 +1578,12 @@ void* kovaaks_create(obs_data_t* settings, obs_source_t* source) {
     try {
     blog(LOG_INFO, "[KovaaksPlugin] kovaaks_create called.");
     auto* ctx = new kovaaks_context();
-    g_imgui_ctx = ctx;
+    {
+        std::lock_guard<std::mutex> lock(g_watcher_ctx_mutex);
+        g_watcher_ctx = ctx;
+    }
 
-    // Read the .ini created by the installer — once, then delete it
+    // Read the .ini created by the installer once, then delete it
     char dll_path[MAX_PATH] = {};
     HMODULE hmod = nullptr;
     GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
@@ -2612,7 +1609,7 @@ void* kovaaks_create(obs_data_t* settings, obs_source_t* source) {
             set("export_folder=",        "export_folder");
         }
         ini_f.close();
-        // Delete the .ini after reading — this only ever runs once
+        // Delete the .ini after reading; this only ever runs once
         try {
             std::filesystem::remove(ini_path);
             blog(LOG_INFO, "[KovaaksPlugin] Loaded and removed installer ini: %s", ini_path.c_str());
@@ -2624,24 +1621,15 @@ void* kovaaks_create(obs_data_t* settings, obs_source_t* source) {
 
     ctx->hotkey_next = obs_hotkey_register_source(source, "kovaaks_next_section", "Kovaaks: Next Section", hotkey_next_section, ctx);
     ctx->hotkey_prev = obs_hotkey_register_source(source, "kovaaks_prev_section", "Kovaaks: Previous Section", hotkey_prev_section, ctx);
-    ctx->hotkey_imgui = obs_hotkey_register_source(source, "kovaaks_open_custom_info", "Kovaaks: Open Custom Info Editor", hotkey_open_imgui, ctx);
     ctx->hotkey_show_killstats = obs_hotkey_register_source(source, "kovaaks_show_killstats", "Kovaaks: Show Latest Kill Stats", hotkey_show_killstats, ctx);
-    ctx->hotkey_graph = obs_hotkey_register_source(source, "kovaaks_open_graph", "Kovaaks: Open Stats Graph", hotkey_open_graph, ctx);
-    ctx->hotkey_evolution = obs_hotkey_register_source(source, "kovaaks_open_evolution", "Kovaaks: Open Stats Evolution Graph", hotkey_open_evolution, ctx);
 
     obs_data_array_t* next_array  = obs_data_get_array(settings, "hotkey_next_section");
     obs_data_array_t* prev_array  = obs_data_get_array(settings, "hotkey_prev_section");
-    obs_data_array_t* imgui_array = obs_data_get_array(settings, "hotkey_open_custom_info");
     obs_data_array_t* ks_array    = obs_data_get_array(settings, "hotkey_show_killstats");
-    obs_data_array_t* graph_array = obs_data_get_array(settings, "hotkey_open_graph");
-    obs_data_array_t* evo_array   = obs_data_get_array(settings, "hotkey_open_evolution");
 
     if (next_array)  { obs_hotkey_load(ctx->hotkey_next,  next_array);  obs_data_array_release(next_array); }
     if (prev_array)  { obs_hotkey_load(ctx->hotkey_prev,  prev_array);  obs_data_array_release(prev_array); }
-    if (imgui_array) { obs_hotkey_load(ctx->hotkey_imgui, imgui_array); obs_data_array_release(imgui_array); }
     if (ks_array)    { obs_hotkey_load(ctx->hotkey_show_killstats, ks_array); obs_data_array_release(ks_array); }
-    if (graph_array) { obs_hotkey_load(ctx->hotkey_graph, graph_array); obs_data_array_release(graph_array); }
-    if (evo_array)   { obs_hotkey_load(ctx->hotkey_evolution, evo_array); obs_data_array_release(evo_array); }
 
     return ctx;
     } catch (const std::exception& e) {
@@ -2655,13 +1643,15 @@ void* kovaaks_create(obs_data_t* settings, obs_source_t* source) {
 
 void kovaaks_destroy(void* data) {
     auto* ctx = static_cast<kovaaks_context*>(data);
-    if (g_imgui_ctx == ctx) g_imgui_ctx = nullptr;
+    StopCsvWatcher();
+    StopSettingsWatcher();
+    {
+        std::lock_guard<std::mutex> lock(g_watcher_ctx_mutex);
+        if (g_watcher_ctx == ctx) g_watcher_ctx = nullptr;
+    }
     if (ctx->hotkey_next  != OBS_INVALID_HOTKEY_ID) obs_hotkey_unregister(ctx->hotkey_next);
     if (ctx->hotkey_prev  != OBS_INVALID_HOTKEY_ID) obs_hotkey_unregister(ctx->hotkey_prev);
-    if (ctx->hotkey_imgui != OBS_INVALID_HOTKEY_ID) obs_hotkey_unregister(ctx->hotkey_imgui);
     if (ctx->hotkey_show_killstats != OBS_INVALID_HOTKEY_ID) obs_hotkey_unregister(ctx->hotkey_show_killstats);
-    if (ctx->hotkey_graph          != OBS_INVALID_HOTKEY_ID) obs_hotkey_unregister(ctx->hotkey_graph);
-    if (ctx->hotkey_evolution      != OBS_INVALID_HOTKEY_ID) obs_hotkey_unregister(ctx->hotkey_evolution);
     delete ctx;
 }
 
@@ -2690,34 +1680,13 @@ bool obs_module_load(void) {
             obs_data_set_array(settings, "hotkey_prev_section", arr);
             obs_data_array_release(arr);
         }
-        if (ctx->hotkey_imgui != OBS_INVALID_HOTKEY_ID) {
-            obs_data_array_t* arr = obs_hotkey_save(ctx->hotkey_imgui);
-            obs_data_set_array(settings, "hotkey_open_custom_info", arr);
-            obs_data_array_release(arr);
-        }
         if (ctx->hotkey_show_killstats != OBS_INVALID_HOTKEY_ID) {
             obs_data_array_t* arr = obs_hotkey_save(ctx->hotkey_show_killstats);
             obs_data_set_array(settings, "hotkey_show_killstats", arr);
             obs_data_array_release(arr);
         }
-        if (ctx->hotkey_graph != OBS_INVALID_HOTKEY_ID) {
-            obs_data_array_t* arr = obs_hotkey_save(ctx->hotkey_graph);
-            obs_data_set_array(settings, "hotkey_open_graph", arr);
-            obs_data_array_release(arr);
-        }
-        if (ctx->hotkey_evolution != OBS_INVALID_HOTKEY_ID) {
-            obs_data_array_t* arr = obs_hotkey_save(ctx->hotkey_evolution);
-            obs_data_set_array(settings, "hotkey_open_evolution", arr);
-            obs_data_array_release(arr);
-        }
     };
     obs_register_source(&kovaaks_info_source);
-
-    // Start the ImGui overlay thread
-    if (!g_imgui_running) {
-        g_imgui_running = true;
-        g_imgui_thread = std::thread(ImGuiMenuThread);
-    }
 
     blog(LOG_INFO, "[KovaaksPlugin] Plugin loaded successfully.");
     return true;
@@ -2731,8 +1700,6 @@ bool obs_module_load(void) {
 }
 
 void obs_module_unload(void) {
-    if (g_imgui_running) {
-        g_imgui_running = false;
-        if (g_imgui_thread.joinable()) g_imgui_thread.join();
-    }
+    StopCsvWatcher();
+    StopSettingsWatcher();
 }
