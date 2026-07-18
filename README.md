@@ -4,7 +4,7 @@ An OBS Studio plugin that tracks [KovaaK's FPS Aim Trainer](https://kovaaks.com/
 
 ## Features
 
-- **Live kill stats widget** (HTML browser source): accuracy, TTK, hits/shots, efficiency per target, with theme presets (Shikuretto / Sukajan, light & dark).
+- **Live kill stats widget** (HTML browser source): accuracy, TTK, hits/shots, efficiency per target, with theme presets.
 - **Run averages**: each stat is compared against your average over the last 10 runs.
 - **Event-driven run detection**: watches your KovaaK's stats folder via the Windows file system API and reacts instantly to new runs, instead of polling on a timer. Parses the latest CSV and filters out non-gauntlet (target-switching) scenarios.
 - **Only active while KovaaK's is running**: the plugin detects the game process and pauses all file watching and exporting when it's closed.
