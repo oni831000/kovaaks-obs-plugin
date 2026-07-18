@@ -249,7 +249,7 @@ std::string get_rgb_color_hex(const json& j, const std::string& key) {
 static std::vector<KillStatBot> ParseKillStatsCsv(const std::string& path);
 
 // CSV watcher
-// Returns true if any running process's name contains the given substring.
+// Returns true if any running process's name contains the given substring (case-insensitive).
 static bool IsProcessRunning(const char* name_substr) {
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap == INVALID_HANDLE_VALUE) return false;
@@ -279,7 +279,7 @@ static bool IsKovaaksRunning() {
 
 // Event-driven folder watch via ReadDirectoryChangesW instead of re-scanning the whole
 // stats folder every second. The thread sleeps at ~0% CPU and Windows wakes it the
-// instant a matching file is written, instead of polling for it.
+// instant a matching file is written, instead of us polling for it.
 struct FolderWatcher {
     std::thread       thread;
     std::atomic<bool> running{false};
@@ -1601,7 +1601,9 @@ void* kovaaks_create(obs_data_t* settings, obs_source_t* source) {
             auto set = [&](const char* key, const char* setting) {
                 if (line.rfind(key, 0) == 0) {
                     std::string val = line.substr(strlen(key));
-                    if (!val.empty()) obs_data_set_string(settings, setting, val.c_str());
+                    std::string existing = obs_data_get_string(settings, setting);
+                    // Only fill in an empty field, never overwrite what the user already configured
+                    if (!val.empty() && existing.empty()) obs_data_set_string(settings, setting, val.c_str());
                 }
             };
             set("kovaaks_save_folder=",  "kovaaks_save_folder");
